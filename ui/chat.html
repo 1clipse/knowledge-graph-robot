@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>知识问答 — 工业机器人知识图谱</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital@0;1&family=Work+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f0f4ff;
+    --surface: #ffffff;
+    --surface-raised: #f5f8ff;
+    --border: #d4dff7;
+    --border-light: #e3ebf8;
+    --text: #3b4a6b;
+    --text-dim: #8a9bb8;
+    --text-bright: #1a2a4a;
+    --accent: #1a56db;
+    --accent-glow: #3b82f6;
+    --accent-dim: #93bbfd;
+    --accent-light: #dbeafe;
+    --accent-soft: #eff6ff;
+    --link: #2563eb;
+    --radius-sm: 4px;
+    --radius: 8px;
+    --radius-lg: 12px;
+    --font-ui: 'Work Sans', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+    --font-mono: 'DM Mono', 'Cascadia Code', 'Fira Code', 'Courier New', monospace;
+    --shadow-sm: 0 1px 3px rgba(26,86,219,0.06);
+    --shadow: 0 4px 16px rgba(26,86,219,0.08);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+
+  body {
+    font-family: var(--font-ui);
+    font-size: 14px;
+    background: var(--bg);
+    color: var(--text);
+    display: flex; flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(26,86,219,0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(26,86,219,0.02) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none; z-index: 0;
+  }
+
+  header {
+    flex-shrink: 0; height: 50px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 28px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: relative; z-index: 10;
+    box-shadow: var(--shadow-sm);
+  }
+  header .brand {
+    font-size: 16px; font-weight: 600; color: var(--text-bright);
+    letter-spacing: 0.3px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  header .brand .dot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 10px var(--accent-glow);
+  }
+  header .brand em {
+    font-style: normal; font-weight: 400; color: var(--text-dim);
+    font-size: 14px; letter-spacing: 0.5px;
+  }
+  header nav { display: flex; gap: 2px; }
+  header nav a {
+    color: var(--text-dim); text-decoration: none; font-size: 14px; font-weight: 500;
+    padding: 7px 16px; border-radius: var(--radius-sm);
+    transition: all 0.2s ease; letter-spacing: 0.2px;
+  }
+  header nav a:hover { color: var(--text); background: var(--accent-soft); }
+  header nav a.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+
+  main {
+    flex: 1; overflow-y: auto; overflow-x: hidden;
+    display: flex; flex-direction: column;
+    padding: 0 28px; position: relative; z-index: 1;
+    scroll-behavior: smooth;
+  }
+
+  #messages {
+    flex: 1;
+    max-width: 760px; width: 100%; margin: 0 auto;
+    padding: 40px 0 28px;
+    display: flex; flex-direction: column; gap: 24px;
+  }
+
+  .empty-state {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px;
+    opacity: 0; animation: fadeUp 0.6s 0.1s forwards;
+  }
+  .empty-state .icon {
+    width: 56px; height: 56px; border-radius: 50%;
+    border: 2px solid var(--accent-dim);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono); font-size: 22px; color: var(--accent);
+    margin-bottom: 6px; background: var(--accent-soft);
+  }
+  .empty-state h2 {
+    font-size: 18px; font-weight: 600; color: var(--text-bright);
+    letter-spacing: 0.2px;
+  }
+  .empty-state p { color: var(--text-dim); font-size: 15px; line-height: 1.6; }
+  .empty-state .examples {
+    display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px;
+    justify-content: center;
+  }
+  .empty-state .examples button {
+    font-family: var(--font-ui); font-size: 14px; font-weight: 500;
+    background: var(--surface); border: 1px solid var(--border-light);
+    color: var(--text); padding: 9px 18px; border-radius: 24px;
+    cursor: pointer; transition: all 0.2s ease;
+  }
+  .empty-state .examples button:hover {
+    border-color: var(--accent); color: var(--accent); background: var(--accent-soft);
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .msg-row {
+    display: flex; flex-direction: column; gap: 5px;
+    animation: fadeUp 0.35s ease;
+    animation-fill-mode: both;
+  }
+  .msg-row.user { align-items: flex-end; }
+  .msg-row.assistant { align-items: flex-start; }
+
+  .msg-label {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--text-dim);
+    padding: 0 5px; margin-bottom: 2px;
+  }
+
+  .msg-bubble {
+    max-width: 88%;
+    padding: 14px 18px; border-radius: var(--radius);
+    font-size: 15px; line-height: 1.75;
+    word-break: break-word; position: relative;
+  }
+  .msg-row.user .msg-bubble {
+    background: var(--accent-soft);
+    border: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) 4px var(--radius);
+    color: var(--text-bright);
+  }
+  .msg-row.assistant .msg-bubble {
+    background: transparent;
+    padding: 14px 0;
+    color: var(--text);
+    border-radius: 0;
+  }
+
+  .typing-cursor {
+    display: inline-block; width: 2px; height: 17px;
+    background: var(--accent); margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: blink 0.7s steps(1) infinite;
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  .msg-row.assistant .msg-bubble p + p { margin-top: 10px; }
+  .msg-row.assistant .msg-bubble strong {
+    color: var(--text-bright); font-weight: 600;
+  }
+  .msg-row.assistant .msg-bubble code {
+    font-size: 13px; font-family: var(--font-mono);
+    background: var(--accent-soft); padding: 3px 7px;
+    border-radius: var(--radius-sm); color: var(--accent);
+    border: 1px solid var(--border-light);
+  }
+  .msg-row.assistant .msg-bubble ul {
+    margin: 8px 0; padding-left: 22px; list-style: none;
+  }
+  .msg-row.assistant .msg-bubble li {
+    margin: 5px 0; position: relative; padding-left: 2px; font-size: 15px;
+  }
+  .msg-row.assistant .msg-bubble li::before {
+    content: '\2014'; color: var(--accent-dim); position: absolute;
+    left: -18px; font-size: 12px;
+  }
+  .msg-row.assistant .msg-bubble em {
+    color: var(--accent); font-style: normal; font-weight: 600;
+  }
+
+  .context-card {
+    margin-bottom: 16px; padding: 16px 18px;
+    background: var(--accent-soft); border: 1px solid var(--border);
+    border-radius: var(--radius); font-size: 13px; color: var(--text);
+    max-height: 160px; overflow-y: auto; position: relative;
+    animation: fadeUp 0.4s ease;
+    animation-fill-mode: both;
+  }
+  .context-card::before {
+    content: '';
+    position: absolute; left: 0; top: 14px; bottom: 14px;
+    width: 3px; background: var(--accent); border-radius: 2px;
+  }
+  .context-card .ctx-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--accent); margin-bottom: 10px; font-weight: 600;
+    font-family: var(--font-mono); padding-left: 10px;
+  }
+  .context-card pre {
+    white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px;
+    margin: 0; line-height: 1.6; padding-left: 10px; color: var(--text);
+  }
+
+  footer {
+    flex-shrink: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 18px 28px 24px;
+    position: relative; z-index: 10;
+    box-shadow: 0 -2px 12px rgba(26,86,219,0.04);
+  }
+  .input-wrap {
+    max-width: 760px; margin: 0 auto;
+    display: flex; gap: 12px; align-items: flex-end;
+  }
+  .input-wrap textarea {
+    flex: 1;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text);
+    font-family: var(--font-ui); font-size: 15px; line-height: 1.6;
+    padding: 13px 18px; resize: none; outline: none;
+    min-height: 50px; max-height: 140px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    caret-color: var(--accent);
+  }
+  .input-wrap textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(26,86,219,0.08);
+  }
+  .input-wrap textarea::placeholder { color: var(--text-dim); opacity: 0.6; }
+
+  .input-wrap button {
+    flex-shrink: 0;
+    height: 50px; min-width: 50px; border-radius: var(--radius);
+    border: none;
+    background: var(--accent); color: #fff;
+    font-family: var(--font-mono); font-size: 20px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s ease; padding: 0 16px; font-weight: 500;
+  }
+  .input-wrap button:hover {
+    background: #1a4fc4; transform: translateY(-1px);
+    box-shadow: var(--shadow);
+  }
+  .input-wrap button:disabled {
+    opacity: 0.4; cursor: default; transform: none; box-shadow: none;
+  }
+
+  .hint {
+    max-width: 760px; margin: 8px auto 0;
+    font-size: 12px; color: var(--text-dim); opacity: 0.6;
+    font-family: var(--font-mono); letter-spacing: 0.3px;
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #c4d3f6; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><span class="dot"></span>知识问答<em>| 工业机器人知识图谱</em></div>
+  <nav>
+    <a href="/">图谱浏览</a>
+    <a href="/chat" class="active">问答</a>
+  </nav>
+</header>
+
+<main>
+  <div id="messages"></div>
+</main>
+
+<footer>
+  <div class="input-wrap">
+    <textarea id="input" rows="1" placeholder="输入问题，如：FANUC M-20iA 的负载和精度是多少？"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+    <button id="sendBtn" onclick="send()">↑</button>
+  </div>
+  <div class="hint">Enter 发送 &middot; Shift + Enter 换行 &middot; 基于知识图谱检索增强回答</div>
+</footer>
+
+<script>
+const API = '/api/v1/ask/stream';
+let isStreaming = false;
+
+showEmpty();
+
+function showEmpty() {
+  const el = document.getElementById('messages');
+  el.innerHTML = `
+    <div class="empty-state">
+      <div class="icon">&Sigma;</div>
+      <h2>基于知识图谱的工业机器人智能问答</h2>
+      <p>检索结构化知识，辅助技术决策</p>
+      <div class="examples">
+        <button onclick="askExample(this)">FANUC M-20iA 的负载和精度？</button>
+        <button onclick="askExample(this)">ABB有哪些型号的焊接机器人？</button>
+        <button onclick="askExample(this)">KUKA机器人用什么控制系统？</button>
+        <button onclick="askExample(this)">比较FANUC和ABB的六轴机器人</button>
+        <button onclick="askExample(this)">RV减速器和谐波减速器有什么区别？</button>
+      </div>
+    </div>`;
+}
+
+function askExample(btn) {
+  document.getElementById('input').value = btn.textContent.trim();
+  send();
+}
+
+function addMsg(role, content) {
+  const el = document.getElementById('messages');
+  const es = el.querySelector('.empty-state'); if (es) es.remove();
+
+  const row = document.createElement('div');
+  row.className = 'msg-row ' + role;
+
+  const label = document.createElement('div');
+  label.className = 'msg-label';
+  label.textContent = role === 'user' ? '提问' : '知识助手';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.innerHTML = content;
+
+  row.appendChild(label);
+  row.appendChild(bubble);
+  el.appendChild(row);
+  return row;
+}
+
+function addContextCard(contextText) {
+  const el = document.getElementById('messages');
+  const es = el.querySelector('.empty-state'); if (es) es.remove();
+
+  const card = document.createElement('div');
+  card.className = 'context-card';
+  card.innerHTML = '<div class="ctx-label">🔎 检索到的相关知识</div><pre>' + escapeHtml(contextText) + '</pre>';
+  el.appendChild(card);
+  return card;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function simpleMd(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
+    .replace(/<\/ul>\n<ul>/g, '')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br>');
+}
+
+async function send() {
+  if (isStreaming) return;
+  const input = document.getElementById('input');
+  const btn = document.getElementById('sendBtn');
+  const question = input.value.trim();
+  if (!question) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  isStreaming = true;
+  btn.disabled = true;
+
+  addMsg('user', escapeHtml(question));
+
+  const row = document.createElement('div');
+  row.className = 'msg-row assistant';
+  const label = document.createElement('div');
+  label.className = 'msg-label'; label.textContent = '知识助手';
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  row.appendChild(label);
+  row.appendChild(bubble);
+  document.getElementById('messages').appendChild(row);
+
+  const cursor = document.createElement('span');
+  cursor.className = 'typing-cursor';
+  bubble.appendChild(cursor);
+
+  let fullText = '';
+  let contextCard = null;
+
+  try {
+    const resp = await fetch(API, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question, top_k: 8})
+    });
+
+    if (!resp.ok) {
+      throw new Error('HTTP ' + resp.status);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
+
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const json = line.slice(6);
+        try {
+          const data = JSON.parse(json);
+          if (data.type === 'meta' && data.context && !contextCard) {
+            contextCard = addContextCard(data.context);
+          } else if (data.type === 'token') {
+            fullText += data.content;
+            bubble.innerHTML = '<p>' + simpleMd(escapeHtml(fullText)) + '</p>';
+            bubble.appendChild(cursor);
+          } else if (data.type === 'done') {
+            if (cursor.parentNode) cursor.remove();
+          } else if (data.type === 'error') {
+            bubble.innerHTML = '<p style="color:#ef4444">服务异常：' + escapeHtml(data.message) + '</p>';
+          }
+        } catch(e) {}
+      }
+    }
+  } catch (e) {
+    bubble.innerHTML = '<p style="color:#ef4444">请求失败：' + escapeHtml(e.message) + '</p>';
+  }
+
+  if (cursor.parentNode) cursor.remove();
+  if (fullText) {
+    bubble.innerHTML = '<p>' + simpleMd(escapeHtml(fullText)) + '</p>';
+  } else if (bubble.innerHTML.includes('请求失败') === false && bubble.innerHTML.includes('服务异常') === false) {
+    bubble.innerHTML = '<p style="color:var(--text-dim)">未能生成回答，请检查后端服务</p>';
+  }
+
+  isStreaming = false;
+  btn.disabled = false;
+
+  const main = document.querySelector('main');
+  main.scrollTo({top: main.scrollHeight, behavior: 'smooth'});
+}
+
+// Auto-resize textarea
+document.getElementById('input').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 140) + 'px';
+});
+</script>
+</body>
+</html>

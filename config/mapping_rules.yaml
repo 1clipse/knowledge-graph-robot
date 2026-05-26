@@ -1,0 +1,61 @@
+mappings:
+  - source_type: "csv"
+    file_pattern: "robots.*\\.csv"
+    node_type: "Robot"
+    key_column: "name"
+    column_mapping:
+      name: "name"
+      model: "model"
+      axes: { column: "axes", type: "integer" }
+      payload_kg: { column: "payload_kg", type: "float", target: "payload" }
+      reach_mm: { column: "reach_mm", type: "float", target: "reach" }
+      repeatability_mm: { column: "repeatability_mm", type: "float", target: "repeatability" }
+      weight_kg: { column: "weight_kg", type: "float", target: "weight" }
+      protection_class: "protection_class"
+      application_type: "application_type"
+      description: "description"
+
+  - source_type: "csv"
+    file_pattern: "manufacturers.*\\.csv"
+    node_type: "Manufacturer"
+    key_column: "name"
+    column_mapping:
+      name: "name"
+      country: "country"
+      founded_year: { column: "founded_year", type: "integer" }
+      headquarters: "headquarters"
+      website: "website"
+      description: "description"
+
+  - source_type: "csv"
+    file_pattern: "components.*\\.csv"
+    node_type: "Component"
+    key_column: "name"
+    column_mapping:
+      name: "name"
+      category: "category"
+      specification: "specification"
+      description: "description"
+
+  - source_type: "csv"
+    file_pattern: "robot_components.*\\.csv"
+    relation_type: "uses_component"
+    source_node_type: "Robot"
+    target_node_type: "Component"
+    source_key_column: "robot_name"
+    target_key_column: "component_name"
+    column_mapping:
+      quantity: { column: "quantity", type: "integer" }
+      position: "position"
+
+  - source_type: "sql"
+    connection_key: "default"
+    query: "SELECT * FROM robots"
+    node_type: "Robot"
+    key_column: "name"
+    column_mapping:
+      name: "name"
+      model: "model"
+      axes: { column: "axes", type: "integer" }
+      payload: { column: "payload", type: "float" }
+      reach: { column: "reach", type: "float" }

@@ -1,0 +1,438 @@
+domain: "工业机器人"
+version: "1.0.0"
+description: "工业机器人行业知识图谱本体定义，涵盖机器人本体、核心零部件、制造商、应用场景、工艺流程等核心概念"
+
+entity_types:
+  Robot:
+    label_zh: "机器人"
+    label_en: "Robot"
+    description: "工业机器人本体，指可编程的多轴机械臂系统"
+    properties:
+      name: { type: "string", required: true, description: "机器人型号名称" }
+      model: { type: "string", required: false, description: "产品型号编号" }
+      axes: { type: "integer", required: false, description: "轴数(4/6/7轴等)" }
+      payload: { type: "float", required: false, description: "额定负载(kg)" }
+      reach: { type: "float", required: false, description: "最大臂展半径(mm)" }
+      repeatability: { type: "float", required: false, description: "重复定位精度(mm)" }
+      weight: { type: "float", required: false, description: "本体重量(kg)" }
+      protection_class: { type: "string", required: false, description: "防护等级(如IP67)" }
+      application_type: { type: "string", required: false, description: "应用类型(焊接/搬运/装配等)" }
+      description: { type: "string", required: false, description: "详细描述" }
+
+  Manufacturer:
+    label_zh: "制造商"
+    label_en: "Manufacturer"
+    description: "工业机器人制造企业"
+    properties:
+      name: { type: "string", required: true, description: "企业名称" }
+      country: { type: "string", required: false, description: "总部所在国家" }
+      founded_year: { type: "integer", required: false, description: "成立年份" }
+      headquarters: { type: "string", required: false, description: "总部地址" }
+      website: { type: "string", required: false, description: "官方网站" }
+      description: { type: "string", required: false, description: "企业简介" }
+
+  Component:
+    label_zh: "零部件"
+    label_en: "Component"
+    description: "机器人核心零部件"
+    properties:
+      name: { type: "string", required: true, description: "零部件名称" }
+      category: { type: "string", required: false, description: "零部件分类(减速器/伺服电机/控制器/传感器等)" }
+      specification: { type: "string", required: false, description: "规格参数" }
+      description: { type: "string", required: false, description: "详细描述" }
+
+  Reducer:
+    label_zh: "减速器"
+    label_en: "Reducer"
+    description: "精密减速器，机器人核心传动部件"
+    properties:
+      name: { type: "string", required: true, description: "减速器型号" }
+      reducer_type: { type: "string", required: false, description: "类型(RV减速器/谐波减速器/行星减速器)" }
+      reduction_ratio: { type: "string", required: false, description: "减速比" }
+      rated_torque: { type: "float", required: false, description: "额定输出扭矩(N·m)" }
+      backlash: { type: "float", required: false, description: "回程间隙(arcmin)" }
+      weight: { type: "float", required: false, description: "重量(kg)" }
+      description: { type: "string", required: false, description: "详细描述" }
+
+  ServoMotor:
+    label_zh: "伺服电机"
+    label_en: "ServoMotor"
+    description: "伺服驱动电机"
+    properties:
+      name: { type: "string", required: true, description: "电机型号" }
+      rated_power: { type: "float", required: false, description: "额定功率(kW)" }
+      rated_torque: { type: "float", required: false, description: "额定扭矩(N·m)" }
+      rated_speed: { type: "float", required: false, description: "额定转速(r/min)" }
+      encoder_resolution: { type: "integer", required: false, description: "编码器分辨率" }
+      description: { type: "string", required: false, description: "详细描述" }
+
+  Controller:
+    label_zh: "控制器"
+    label_en: "Controller"
+    description: "机器人控制系统"
+    properties:
+      name: { type: "string", required: true, description: "控制器型号" }
+      control_axes: { type: "integer", required: false, description: "可控制轴数" }
+      programming_language: { type: "string", required: false, description: "编程语言" }
+      communication_protocol: { type: "string", required: false, description: "通信协议(如EtherCAT/PROFINET)" }
+      description: { type: "string", required: false, description: "详细描述" }
+
+  Sensor:
+    label_zh: "传感器"
+    label_en: "Sensor"
+    description: "机器人用传感器"
+    properties:
+      name: { type: "string", required: true, description: "传感器型号" }
+      sensor_type: { type: "string", required: false, description: "类型(力矩/视觉/碰撞/位置等)" }
+      measurement_range: { type: "string", required: false, description: "测量范围" }
+      accuracy: { type: "string", required: false, description: "精度" }
+      description: { type: "string", required: false, description: "详细描述" }
+
+  ApplicationScenario:
+    label_zh: "应用场景"
+    label_en: "ApplicationScenario"
+    description: "工业机器人的应用领域和场景"
+    properties:
+      name: { type: "string", required: true, description: "场景名称" }
+      industry: { type: "string", required: false, description: "所属行业(汽车/电子/金属加工/食品等)" }
+      description: { type: "string", required: false, description: "场景描述" }
+
+  Process:
+    label_zh: "工艺流程"
+    label_en: "Process"
+    description: "机器人执行的工艺操作"
+    properties:
+      name: { type: "string", required: true, description: "工艺名称" }
+      process_type: { type: "string", required: false, description: "工艺类型(焊接/喷涂/搬运/装配/打磨等)" }
+      requirements: { type: "string", required: false, description: "工艺要求" }
+      description: { type: "string", required: false, description: "详细描述" }
+
+  EndEffector:
+    label_zh: "末端执行器"
+    label_en: "EndEffector"
+    description: "安装在机器人末端的工具/夹具"
+    properties:
+      name: { type: "string", required: true, description: "末端执行器名称" }
+      effector_type: { type: "string", required: false, description: "类型(焊枪/夹爪/吸盘/喷枪等)" }
+      weight: { type: "float", required: false, description: "重量(kg)" }
+      description: { type: "string", required: false, description: "详细描述" }
+
+  Standard:
+    label_zh: "标准规范"
+    label_en: "Standard"
+    description: "行业标准和安全规范"
+    properties:
+      name: { type: "string", required: true, description: "标准编号和名称" }
+      standard_type: { type: "string", required: false, description: "类型(ISO/GB/IEC/EN)" }
+      version: { type: "string", required: false, description: "版本号" }
+      release_date: { type: "string", required: false, description: "发布日期" }
+      description: { type: "string", required: false, description: "标准概述" }
+
+  Material:
+    label_zh: "加工材料"
+    label_en: "Material"
+    description: "机器人加工处理的材料"
+    properties:
+      name: { type: "string", required: true, description: "材料名称" }
+      material_type: { type: "string", required: false, description: "类型(金属/塑料/复合材料等)" }
+      properties: { type: "string", required: false, description: "材料特性" }
+      description: { type: "string", required: false, description: "详细描述" }
+
+  Software:
+    label_zh: "软件系统"
+    label_en: "Software"
+    description: "机器人相关软件(仿真/离线编程/MES等)"
+    properties:
+      name: { type: "string", required: true, description: "软件名称" }
+      software_type: { type: "string", required: false, description: "类型(仿真/离线编程/视觉/调度等)" }
+      version: { type: "string", required: false, description: "版本号" }
+      description: { type: "string", required: false, description: "详细描述" }
+
+relation_types:
+  manufactures:
+    label_zh: "生产"
+    label_en: "MANUFACTURES"
+    source: "Manufacturer"
+    target: "Robot"
+    description: "制造商生产机器人型号"
+    properties:
+      since_year: { type: "integer", required: false, description: "开始生产年份" }
+
+  supplies_component:
+    label_zh: "供应零部件"
+    label_en: "SUPPLIES_COMPONENT"
+    source: "Manufacturer"
+    target: "Component"
+    description: "制造商供应零部件"
+    properties:
+      component_role: { type: "string", required: false, description: "零部件角色(核心/可选)" }
+
+  uses_component:
+    label_zh: "使用零部件"
+    label_en: "USES_COMPONENT"
+    source: "Robot"
+    target: "Component"
+    description: "机器人使用零部件"
+    properties:
+      quantity: { type: "integer", required: false, description: "使用数量" }
+      position: { type: "string", required: false, description: "安装位置" }
+
+  uses_reducer:
+    label_zh: "使用减速器"
+    label_en: "USES_REDUCER"
+    source: "Robot"
+    target: "Reducer"
+    description: "机器人使用减速器"
+    properties:
+      quantity: { type: "integer", required: false, description: "使用数量" }
+      joint_position: { type: "string", required: false, description: "关节位置(J1-J6)" }
+
+  uses_servo:
+    label_zh: "使用伺服电机"
+    label_en: "USES_SERVO"
+    source: "Robot"
+    target: "ServoMotor"
+    description: "机器人使用伺服电机"
+    properties:
+      quantity: { type: "integer", required: false, description: "使用数量" }
+      joint_position: { type: "string", required: false, description: "关节位置" }
+
+  uses_controller:
+    label_zh: "使用控制器"
+    label_en: "USES_CONTROLLER"
+    source: "Robot"
+    target: "Controller"
+    description: "机器人搭配控制器"
+    properties:
+      is_default: { type: "boolean", required: false, description: "是否为默认搭配" }
+
+  uses_sensor:
+    label_zh: "使用传感器"
+    label_en: "USES_SENSOR"
+    source: "Robot"
+    target: "Sensor"
+    description: "机器人配备传感器"
+    properties:
+      mounting_position: { type: "string", required: false, description: "安装位置" }
+
+  uses_end_effector:
+    label_zh: "使用末端执行器"
+    label_en: "USES_END_EFFECTOR"
+    source: "Robot"
+    target: "EndEffector"
+    description: "机器人使用末端执行器"
+    properties:
+      compatibility: { type: "string", required: false, description: "兼容性说明" }
+
+  applied_in:
+    label_zh: "应用于"
+    label_en: "APPLIED_IN"
+    source: "Robot"
+    target: "ApplicationScenario"
+    description: "机器人应用于某场景"
+    properties:
+      suitability: { type: "string", required: false, description: "适用程度(高/中/低)" }
+
+  performs_process:
+    label_zh: "执行工艺"
+    label_en: "PERFORMS_PROCESS"
+    source: "Robot"
+    target: "Process"
+    description: "机器人执行某工艺"
+    properties:
+      efficiency: { type: "string", required: false, description: "效率评价" }
+
+  process_requires:
+    label_zh: "工艺需要"
+    label_en: "PROCESS_REQUIRES"
+    source: "Process"
+    target: "EndEffector"
+    description: "工艺需要末端执行器"
+    properties: {}
+
+  process_material:
+    label_zh: "加工材料"
+    label_en: "PROCESS_MATERIAL"
+    source: "Process"
+    target: "Material"
+    description: "工艺加工的材料"
+    properties: {}
+
+  scenario_includes:
+    label_zh: "场景包含"
+    label_en: "SCENARIO_INCLUDES"
+    source: "ApplicationScenario"
+    target: "Process"
+    description: "应用场景包含的工艺流程"
+    properties: {}
+
+  complies_with:
+    label_zh: "符合标准"
+    label_en: "COMPLIES_WITH"
+    source: "Robot"
+    target: "Standard"
+    description: "机器人符合某标准"
+    properties:
+      certification_date: { type: "string", required: false, description: "认证日期" }
+
+  uses_software:
+    label_zh: "使用软件"
+    label_en: "USES_SOFTWARE"
+    source: "Robot"
+    target: "Software"
+    description: "机器人使用软件系统"
+    properties:
+      integration_type: { type: "string", required: false, description: "集成方式(原生/第三方)" }
+
+  component_compatible:
+    label_zh: "零部件兼容"
+    label_en: "COMPATIBLE_WITH"
+    source: "Component"
+    target: "Component"
+    description: "零部件之间的兼容关系"
+    properties:
+      compatibility_note: { type: "string", required: false, description: "兼容性说明" }
+
+  contains:
+    label_zh: "包含"
+    label_en: "CONTAINS"
+    source: "Component"
+    target: "Component"
+    description: "零部件/图纸包含关系"
+    properties:
+      count: { type: "integer", required: false, description: "包含数量" }
+
+  competitor_of:
+    label_zh: "竞争关系"
+    label_en: "COMPETITOR_OF"
+    source: "Manufacturer"
+    target: "Manufacturer"
+    description: "制造商之间的竞争关系"
+    properties: {}
+
+  subsidiary_of:
+    label_zh: "子公司"
+    label_en: "SUBSIDIARY_OF"
+    source: "Manufacturer"
+    target: "Manufacturer"
+    description: "母子公司关系"
+    properties: {}
+
+sample_data:
+  entities:
+    - type: "Manufacturer"
+      properties:
+        name: "FANUC"
+        country: "日本"
+        founded_year: 1956
+        headquarters: "日本山梨县"
+        website: "https://www.fanuc.com"
+
+    - type: "Manufacturer"
+      properties:
+        name: "ABB"
+        country: "瑞士"
+        founded_year: 1988
+        headquarters: "瑞士苏黎世"
+        website: "https://new.abb.com/products/robotics"
+
+    - type: "Manufacturer"
+      properties:
+        name: "KUKA"
+        country: "德国"
+        founded_year: 1898
+        headquarters: "德国奥格斯堡"
+
+    - type: "Manufacturer"
+      properties:
+        name: "安川电机"
+        country: "日本"
+        founded_year: 1915
+        headquarters: "日本北九州市"
+
+    - type: "Robot"
+      properties:
+        name: "FANUC M-20iA"
+        model: "M-20iA"
+        axes: 6
+        payload: 20
+        reach: 1853
+        repeatability: 0.02
+        application_type: "搬运/装配"
+
+    - type: "Robot"
+      properties:
+        name: "ABB IRB 6700"
+        model: "IRB 6700"
+        axes: 6
+        payload: 200
+        reach: 2650
+        repeatability: 0.05
+        application_type: "焊接/搬运"
+
+    - type: "Reducer"
+      properties:
+        name: "RV-40E"
+        reducer_type: "RV减速器"
+        reduction_ratio: "40:1"
+        rated_torque: 40
+        backlash: 1.0
+
+    - type: "ServoMotor"
+      properties:
+        name: "αiF 8/4000"
+        rated_power: 1.8
+        rated_torque: 8
+        rated_speed: 4000
+
+    - type: "ApplicationScenario"
+      properties:
+        name: "汽车白车身焊接"
+        industry: "汽车制造"
+
+    - type: "Process"
+      properties:
+        name: "点焊"
+        process_type: "焊接"
+
+    - type: "EndEffector"
+      properties:
+        name: "伺服焊枪"
+        effector_type: "焊枪"
+
+  relations:
+    - type: "manufactures"
+      source: { type: "Manufacturer", name: "FANUC" }
+      target: { type: "Robot", name: "FANUC M-20iA" }
+      properties: { since_year: 2010 }
+
+    - type: "manufactures"
+      source: { type: "Manufacturer", name: "ABB" }
+      target: { type: "Robot", name: "ABB IRB 6700" }
+      properties: { since_year: 2013 }
+
+    - type: "uses_reducer"
+      source: { type: "Robot", name: "FANUC M-20iA" }
+      target: { type: "Reducer", name: "RV-40E" }
+      properties: { quantity: 3, joint_position: "J1-J3" }
+
+    - type: "uses_servo"
+      source: { type: "Robot", name: "FANUC M-20iA" }
+      target: { type: "ServoMotor", name: "αiF 8/4000" }
+      properties: { quantity: 6 }
+
+    - type: "applied_in"
+      source: { type: "Robot", name: "ABB IRB 6700" }
+      target: { type: "ApplicationScenario", name: "汽车白车身焊接" }
+
+    - type: "performs_process"
+      source: { type: "Robot", name: "ABB IRB 6700" }
+      target: { type: "Process", name: "点焊" }
+
+    - type: "process_requires"
+      source: { type: "Process", name: "点焊" }
+      target: { type: "EndEffector", name: "伺服焊枪" }
+
+    - type: "competitor_of"
+      source: { type: "Manufacturer", name: "FANUC" }
+      target: { type: "Manufacturer", name: "ABB" }
