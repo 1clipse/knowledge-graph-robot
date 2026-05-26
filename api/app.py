@@ -115,7 +115,7 @@ def index_page():
 
 @app.get("/chat", response_class=HTMLResponse)
 def chat_page():
-    return (_UI_DIR / "chat.html").read_text(encoding="utf-8")
+    return (_UI_DIR / "index.html").read_text(encoding="utf-8")
 
 
 app.include_router(ingest.router, prefix="/api/v1", tags=["数据摄入"])

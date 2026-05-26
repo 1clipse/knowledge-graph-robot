@@ -3,607 +3,172 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>工业机器人知识图谱</title>
+<title>工业机器人知识图谱 — Industrial Robot KG</title>
+
+<!-- D3.js -->
 <script src="https://cdn.bootcdn.net/ajax/libs/d3/7.9.0/d3.min.js"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital@0;1&family=Work+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg: #f0f4ff;
-    --surface: #ffffff;
-    --surface-raised: #f5f8ff;
-    --border: #d4dff7;
-    --border-light: #e3ebf8;
-    --text: #3b4a6b;
-    --text-dim: #8a9bb8;
-    --text-bright: #1a2a4a;
-    --accent: #1a56db;
-    --accent-glow: #3b82f6;
-    --accent-dim: #93bbfd;
-    --accent-light: #dbeafe;
-    --accent-soft: #eff6ff;
-    --link: #2563eb;
-    --radius-sm: 4px;
-    --radius: 8px;
-    --radius-lg: 12px;
-    --shadow-sm: 0 1px 3px rgba(26,86,219,0.06);
-    --shadow: 0 4px 16px rgba(26,86,219,0.08);
-    --shadow-lg: 0 8px 32px rgba(26,86,219,0.12);
-    --font-ui: 'Work Sans', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
-    --font-mono: 'DM Mono', 'Cascadia Code', 'Fira Code', 'Courier New', monospace;
-  }
 
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { height: 100%; }
+<!-- Design System -->
+<link rel="stylesheet" href="/css/style.css">
 
-  body {
-    font-family: var(--font-ui);
-    font-size: 14px;
-    background: var(--bg);
-    color: var(--text);
-    display: flex; overflow: hidden;
-    -webkit-font-smoothing: antialiased;
-  }
-
-  body::before {
-    content: '';
-    position: fixed; inset: 0;
-    background-image:
-      linear-gradient(rgba(26,86,219,0.025) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(26,86,219,0.025) 1px, transparent 1px);
-    background-size: 48px 48px;
-    pointer-events: none; z-index: 0;
-  }
-
-  #sidebar {
-    width: 320px; flex-shrink: 0;
-    background: var(--surface);
-    border-right: 1px solid var(--border);
-    display: flex; flex-direction: column;
-    z-index: 20; position: relative;
-    box-shadow: var(--shadow-sm);
-  }
-
-  #sidebar .brand {
-    padding: 20px 22px 16px;
-    font-size: 16px; font-weight: 600; color: var(--text-bright);
-    letter-spacing: 0.3px;
-    display: flex; align-items: center; gap: 10px;
-    background: linear-gradient(135deg, var(--accent-soft), var(--surface));
-    border-bottom: 1px solid var(--border-light);
-  }
-  #sidebar .brand .brand-dot {
-    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
-    background: var(--accent); box-shadow: 0 0 10px var(--accent-glow);
-  }
-  #sidebar .brand em {
-    font-style: normal; font-weight: 400; color: var(--text-dim);
-    font-size: 13px; letter-spacing: 0.5px;
-  }
-
-  #sidebar nav {
-    padding: 10px 14px;
-    display: flex; flex-direction: column; gap: 2px;
-    border-bottom: 1px solid var(--border-light);
-  }
-  #sidebar nav a {
-    display: flex; align-items: center; gap: 12px;
-    padding: 11px 14px; border-radius: var(--radius);
-    font-size: 14px; font-weight: 500; color: var(--text-dim);
-    text-decoration: none; cursor: pointer;
-    transition: all 0.15s ease; letter-spacing: 0.2px;
-  }
-  #sidebar nav a:hover { color: var(--text); background: var(--accent-soft); }
-  #sidebar nav a.active {
-    color: var(--accent); background: var(--accent-soft);
-    font-weight: 600;
-  }
-  #sidebar nav a .nav-icon {
-    font-size: 16px; width: 22px; text-align: center;
-    font-family: var(--font-mono); color: var(--accent-dim);
-  }
-  #sidebar nav a.active .nav-icon { color: var(--accent); }
-
-  #graph-panels {
-    flex: 1; overflow-y: auto; padding: 14px;
-    display: none; flex-direction: column; gap: 10px;
-  }
-  #graph-panels.visible { display: flex; }
-
-  .side-panel {
-    background: var(--surface-raised); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 14px;
-    box-shadow: var(--shadow-sm);
-  }
-  .side-panel h4 {
-    font-size: 11px; font-weight: 600; color: var(--accent);
-    text-transform: uppercase; letter-spacing: 1px;
-    font-family: var(--font-mono); margin-bottom: 12px;
-    display: flex; align-items: center; gap: 7px;
-  }
-  .side-panel h4::before {
-    content: ''; display: inline-block; width: 4px; height: 14px;
-    background: var(--accent); border-radius: 2px;
-  }
-
-  .side-search { display: flex; gap: 7px; }
-  .side-search input {
-    flex: 1; background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); color: var(--text);
-    font-family: var(--font-ui); font-size: 13px; padding: 9px 12px;
-    outline: none; transition: border-color 0.15s;
-  }
-  .side-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(26,86,219,0.08); }
-  .side-search button {
-    background: var(--accent); border: 1px solid var(--accent);
-    color: #fff; border-radius: var(--radius-sm);
-    padding: 9px 16px; font-size: 13px; cursor: pointer;
-    font-family: var(--font-ui); font-weight: 500;
-    transition: all 0.15s;
-  }
-  .side-search button:hover { background: #1a4fc4; border-color: #1a4fc4; }
-
-  .path-finder { display: flex; flex-direction: column; gap: 7px; }
-  .path-finder select {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); color: var(--text);
-    font-family: var(--font-ui); font-size: 13px; padding: 8px 10px;
-    outline: none; cursor: pointer;
-  }
-  .path-finder select:focus { border-color: var(--accent); }
-  .path-finder button {
-    background: var(--accent-soft); border: 1px solid var(--accent-dim);
-    color: var(--accent); border-radius: var(--radius-sm);
-    padding: 9px; font-size: 13px; cursor: pointer;
-    font-family: var(--font-ui); font-weight: 500;
-    transition: all 0.15s;
-  }
-  .path-finder button:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
-
-  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .stat-cell {
-    background: var(--surface); border-radius: var(--radius-sm); padding: 12px 8px;
-    text-align: center; border: 1px solid var(--border);
-    transition: all 0.2s;
-  }
-  .stat-cell:hover { border-color: var(--accent-dim); box-shadow: var(--shadow-sm); }
-  .stat-cell .val { font-size: 22px; font-weight: 700; color: var(--accent); font-family: var(--font-mono); }
-  .stat-cell .lbl { font-size: 10px; color: var(--text-dim); margin-top: 3px; letter-spacing: 0.5px; font-weight: 500; }
-
-  .node-list { max-height: 220px; overflow-y: auto; }
-  .node-item {
-    padding: 8px 10px; border-radius: var(--radius-sm); cursor: pointer;
-    font-size: 12px; display: flex; align-items: center; gap: 8px;
-    transition: background 0.1s; margin-bottom: 2px;
-    color: var(--text-dim); font-weight: 500;
-  }
-  .node-item:hover { background: var(--accent-soft); color: var(--text); }
-  .node-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-
-  #nodeDetail {
-    font-size: 13px; color: var(--text-dim); line-height: 1.7;
-    max-height: 260px; overflow-y: auto;
-  }
-  #nodeDetail .detail-label {
-    display: inline-block; padding: 2px 8px; border-radius: 3px;
-    font-size: 10px; font-weight: 600; margin-right: 8px;
-    color: #fff; letter-spacing: 0.5px;
-  }
-  #nodeDetail .detail-name { color: var(--text-bright); font-weight: 600; margin-bottom: 8px; font-size: 15px; }
-  #nodeDetail .detail-row { margin: 3px 0; font-size: 13px; }
-  #nodeDetail .detail-row span:first-child { color: var(--text-dim); font-weight: 500; }
-  #nodeDetail .neighbor-section { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-light); }
-
-  #main {
-    flex: 1; display: flex; flex-direction: column;
-    position: relative; z-index: 1; overflow: hidden;
-  }
-
-  #graph-view { flex: 1; position: relative; display: flex; }
-  #graph-view.hidden { display: none; }
-  #graph-container { flex: 1; position: relative; }
-
-  .graph-tooltip {
-    position: absolute; padding: 12px 16px; background: var(--surface);
-    border: 1px solid var(--border); border-radius: var(--radius);
-    font-size: 13px; pointer-events: none; z-index: 200; max-width: 340px;
-    display: none; box-shadow: var(--shadow-lg); line-height: 1.6;
-  }
-  .graph-tooltip strong { color: var(--text-bright); font-size: 14px; }
-
-  .graph-controls {
-    position: absolute; bottom: 20px; left: 20px;
-    display: flex; gap: 8px; z-index: 100;
-  }
-  .graph-controls button {
-    padding: 8px 16px; border-radius: var(--radius-sm);
-    border: 1px solid var(--border); background: var(--surface);
-    color: var(--text); cursor: pointer; font-size: 13px; font-weight: 500;
-    font-family: var(--font-ui); transition: all 0.15s;
-    box-shadow: var(--shadow-sm);
-  }
-  .graph-controls button:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-
-  .graph-legend {
-    position: absolute; top: 14px; right: 14px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 14px 16px; z-index: 100;
-    display: flex; flex-wrap: wrap; gap: 8px; max-width: 380px;
-    box-shadow: var(--shadow);
-  }
-  .legend-item {
-    display: flex; align-items: center; gap: 5px; font-size: 12px;
-    color: var(--text); cursor: pointer; padding: 4px 8px;
-    border-radius: 20px; transition: all 0.15s; font-weight: 500;
-    border: 1px solid transparent; user-select: none;
-  }
-  .legend-item:hover { background: var(--accent-soft); border-color: var(--border); }
-  .legend-item.filtered { opacity: 0.35; }
-  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-
-  .graph-loading {
-    position: absolute; inset: 0; display: flex; align-items: center;
-    justify-content: center; z-index: 50; pointer-events: none;
-  }
-  .graph-loading .spinner {
-    width: 36px; height: 36px; border: 3px solid var(--border);
-    border-top-color: var(--accent); border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  #chat-view { flex: 1; display: none; flex-direction: column; overflow: hidden; }
-  #chat-view.visible { display: flex; }
-
-  #chat-messages {
-    flex: 1; overflow-y: auto;
-    max-width: 760px; width: 100%; margin: 0 auto;
-    padding: 40px 28px 24px;
-    display: flex; flex-direction: column; gap: 24px;
-  }
-
-  .chat-empty {
-    flex: 1; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 12px;
-    opacity: 0; animation: fadeUp 0.6s 0.1s forwards;
-  }
-  .chat-empty .ce-icon {
-    width: 56px; height: 56px; border-radius: 50%;
-    border: 2px solid var(--accent-dim);
-    display: flex; align-items: center; justify-content: center;
-    font-family: var(--font-mono); font-size: 22px; color: var(--accent);
-    margin-bottom: 6px; background: var(--accent-soft);
-  }
-  .chat-empty h2 { font-size: 18px; font-weight: 600; color: var(--text-bright); letter-spacing: 0.2px; }
-  .chat-empty p { color: var(--text-dim); font-size: 15px; }
-  .chat-empty .ce-examples { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; justify-content: center; }
-  .chat-empty .ce-examples button {
-    font-family: var(--font-ui); font-size: 14px; font-weight: 500;
-    background: var(--surface); border: 1px solid var(--border-light);
-    color: var(--text); padding: 9px 18px; border-radius: 24px;
-    cursor: pointer; transition: all 0.2s;
-  }
-  .chat-empty .ce-examples button:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-
-  @keyframes fadeUp {
-    from { opacity: 0; transform: translateY(12px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  .msg-row { display: flex; flex-direction: column; gap: 5px; animation: fadeUp 0.35s ease both; flex-shrink: 0; min-width: 100%; }
-  .msg-row.user { align-items: flex-end; }
-  .msg-row.assistant { align-items: flex-start; }
-
-  .msg-label {
-    font-size: 11px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.8px; color: var(--text-dim); padding: 0 5px; margin-bottom: 2px;
-  }
-
-  .msg-bubble {
-    max-width: 88%; padding: 14px 18px; border-radius: var(--radius);
-    font-size: 15px; line-height: 1.75; word-break: break-word; white-space: normal;
-  }
-  .msg-row.user .msg-bubble {
-    background: var(--accent-soft); border: 1px solid var(--border);
-    border-radius: var(--radius) var(--radius) 4px var(--radius);
-    color: var(--text-bright);
-  }
-  .msg-row.assistant .msg-bubble { background: transparent; padding: 14px 0; border-radius: 0; }
-
-  .typing-cursor {
-    display: inline-block; width: 2px; height: 17px;
-    background: var(--accent); margin-left: 2px;
-    vertical-align: text-bottom;
-    animation: blink 0.7s steps(1) infinite;
-  }
-  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
-
-  .msg-row.assistant .msg-bubble p + p { margin-top: 10px; }
-  .msg-row.assistant .msg-bubble strong { color: var(--text-bright); font-weight: 600; }
-  .msg-row.assistant .msg-bubble code {
-    font-size: 13px; font-family: var(--font-mono);
-    background: var(--accent-soft); padding: 3px 7px;
-    border-radius: var(--radius-sm); color: var(--accent);
-    border: 1px solid var(--border-light);
-  }
-  .msg-row.assistant .msg-bubble ul { margin: 8px 0; padding-left: 22px; list-style: none; }
-  .msg-row.assistant .msg-bubble li { margin: 5px 0; position: relative; font-size: 15px; }
-  .msg-row.assistant .msg-bubble li::before {
-    content: '\2014'; color: var(--accent-dim); position: absolute; left: -18px; font-size: 12px;
-  }
-  .msg-row.assistant .msg-bubble em { color: var(--accent); font-style: normal; font-weight: 600; }
-
-  .context-card {
-    margin-bottom: 16px; padding: 16px 18px;
-    background: var(--accent-soft); border: 1px solid var(--border);
-    border-radius: var(--radius); font-size: 13px; color: var(--text);
-    max-height: 160px; overflow-y: auto; position: relative;
-    animation: fadeUp 0.4s ease both;
-    flex-shrink: 0; min-width: 100%; box-sizing: border-box;
-  }
-  .context-card::before {
-    content: ''; position: absolute; left: 0; top: 14px; bottom: 14px;
-    width: 3px; background: var(--accent); border-radius: 2px;
-  }
-  .context-card .ctx-label {
-    font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
-    color: var(--accent); margin-bottom: 10px; font-weight: 600;
-    font-family: var(--font-mono); padding-left: 10px;
-  }
-  .context-card pre {
-    white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px;
-    margin: 0; line-height: 1.6; padding-left: 10px; color: var(--text);
-  }
-
-  #chat-input-area {
-    flex-shrink: 0; background: var(--surface);
-    border-top: 1px solid var(--border);
-    padding: 18px 28px 24px;
-    box-shadow: 0 -2px 12px rgba(26,86,219,0.04);
-    width: 100%; box-sizing: border-box;
-  }
-  .chat-input-wrap {
-    max-width: 760px; width: 100%; margin: 0 auto;
-    display: flex; gap: 12px; align-items: flex-end;
-    box-sizing: border-box;
-  }
-  .chat-input-wrap textarea {
-    flex: 1 1 auto; min-width: 300px;
-    background: var(--bg); border: 1px solid var(--border);
-    border-radius: var(--radius); color: var(--text);
-    font-family: var(--font-ui); font-size: 15px; line-height: 1.6;
-    padding: 13px 18px; resize: none; outline: none;
-    min-height: 50px; max-height: 140px;
-    box-sizing: border-box;
-    white-space: pre-wrap; word-break: break-word;
-    transition: border-color 0.2s, box-shadow 0.2s;
-    caret-color: var(--accent);
-  }
-  .chat-input-wrap textarea:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 4px rgba(26,86,219,0.08);
-  }
-  .chat-input-wrap textarea::placeholder { color: var(--text-dim); opacity: 0.6; }
-  .chat-input-wrap button {
-    flex-shrink: 0; height: 50px; min-width: 50px; border-radius: var(--radius);
-    border: none; background: var(--accent);
-    color: #fff; font-family: var(--font-mono); font-size: 20px;
-    cursor: pointer; display: flex; align-items: center; justify-content: center;
-    transition: all 0.2s; padding: 0 16px; font-weight: 500;
-  }
-  .chat-input-wrap button:hover { background: #1a4fc4; transform: translateY(-1px); box-shadow: var(--shadow); }
-  .chat-input-wrap button:disabled { opacity: 0.4; cursor: default; transform: none; box-shadow: none; }
-  .chat-hint {
-    max-width: 760px; width: 100%;
-    margin: 8px auto 0; padding: 0;
-    font-size: 12px; color: var(--text-dim); opacity: 0.6;
-    font-family: var(--font-ui); letter-spacing: 0.2px;
-    white-space: normal; word-break: break-word;
-    box-sizing: border-box; text-align: center;
-  }
-
-  /* Ingest panel */
-  .ingest-area textarea {
-    width: 100%; box-sizing: border-box;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); color: var(--text);
-    font-family: var(--font-ui); font-size: 13px; padding: 10px 12px;
-    outline: none; resize: vertical; min-height: 80px;
-    white-space: pre-wrap; word-wrap: break-word;
-    transition: border-color 0.15s;
-  }
-  .ingest-area textarea:focus { border-color: var(--accent); }
-  .ingest-actions { display: flex; gap: 7px; margin-top: 8px; }
-  .ingest-actions button {
-    flex: 1; padding: 8px; border-radius: var(--radius-sm);
-    font-size: 12px; cursor: pointer; font-family: var(--font-ui); font-weight: 500;
-    transition: all 0.15s; border: 1px solid var(--accent);
-  }
-  .ingest-actions .btn-primary {
-    background: var(--accent); color: #fff;
-  }
-  .ingest-actions .btn-primary:hover { background: #1a4fc4; }
-  .ingest-actions .btn-secondary {
-    background: transparent; color: var(--accent);
-  }
-  .ingest-actions .btn-secondary:hover { background: var(--accent-soft); }
-  .ingest-status { font-size: 12px; margin-top: 6px; min-height: 18px; }
-  .ingest-status.success { color: #10b981; }
-  .ingest-status.error { color: #ef4444; }
-  #ingestFile { display: none; }
-
-  .log-list { max-height: 300px; overflow-y: auto; }
-  .log-item {
-    display: flex; align-items: center; justify-content: space-between; gap: 6px;
-    padding: 8px 10px; border-radius: var(--radius-sm); cursor: default;
-    font-size: 11px; color: var(--text-dim); margin-bottom: 3px;
-    background: var(--surface); border: 1px solid var(--border-light);
-    transition: all 0.15s;
-  }
-  .log-item:hover { border-color: var(--border); }
-  .log-item .log-info { flex: 1; min-width: 0; }
-  .log-item .log-info .log-fn { font-weight: 600; color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .log-item .log-info .log-meta { margin-top: 2px; font-size: 10px; }
-  .log-item .log-del {
-    flex-shrink: 0; padding: 3px 8px; border-radius: 3px; border: 1px solid #ef4444;
-    background: transparent; color: #ef4444; cursor: pointer; font-size: 10px;
-    font-family: var(--font-ui); transition: all 0.15s;
-  }
-  .log-item .log-del:hover { background: #ef4444; color: #fff; }
-  .refresh-logs-btn {
-    float: right; font-size: 10px; cursor: pointer; padding: 2px 10px;
-    border: 1px solid var(--border); background: var(--surface);
-    border-radius: 3px; color: var(--text-dim); font-family: var(--font-ui);
-    transition: all 0.15s;
-  }
-  .refresh-logs-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #c4d3f6; border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
-</style>
 </head>
 <body>
 
+<!-- ============================================================
+     SIDEBAR
+     ============================================================ -->
 <div id="sidebar">
-  <div class="brand"><span class="brand-dot"></span>知识图谱<em>| 工业机器人</em></div>
+  <div class="brand">
+    <span class="brand-mark">KG</span>
+    <span class="brand-divider"></span>
+    <span class="brand-sub">Industrial Robot</span>
+  </div>
+
   <nav>
     <a class="active" data-view="graph" onclick="switchView('graph')">
-      <span class="nav-icon">&there4;</span> 图谱浏览
+      <span class="nav-icon">&#x2261;</span> Graph
     </a>
     <a data-view="chat" onclick="switchView('chat')">
-      <span class="nav-icon">&Sigma;</span> 知识问答
+      <span class="nav-icon">&Sigma;</span> Q&A
     </a>
     <a data-view="graph" onclick="switchView('graph'); setTimeout(loadFullGraph, 100)">
-      <span class="nav-icon">&oplus;</span> 全貌总览
+      <span class="nav-icon">&#x2304;</span> Full View
     </a>
   </nav>
 
   <div id="graph-panels" class="visible">
+
+    <!-- Search -->
     <div class="side-panel">
-      <h4>搜索实体</h4>
+      <h4>Search Entities</h4>
       <div class="side-search">
-        <input type="text" id="searchInput" placeholder="输入型号、品牌、工艺..."
-          onkeydown="if(event.key==='Enter')searchEntities()" />
-        <button onclick="searchEntities()">搜索</button>
+        <input type="text" id="searchInput" placeholder="Model, brand, process..."
+               onkeydown="if(event.key==='Enter')searchEntities()" />
+        <button onclick="searchEntities()">Search</button>
       </div>
-      <div class="node-list" id="searchResults" style="margin-top:10px;"></div>
+      <div class="node-list" id="searchResults" style="margin-top:8px;"></div>
     </div>
 
+    <!-- Path -->
     <div class="side-panel">
-      <h4>路径查询</h4>
+      <h4>Path Query</h4>
       <div class="path-finder">
         <select id="pathSource" onchange="updatePathTarget()">
-          <option value="">选择起始实体...</option>
+          <option value="">Select start...</option>
         </select>
         <select id="pathTarget">
-          <option value="">选择目标实体...</option>
+          <option value="">Select target...</option>
         </select>
-        <button onclick="findPath()">查找最短路径</button>
+        <button onclick="findPath()">Shortest Path</button>
       </div>
     </div>
 
+    <!-- Compare -->
     <div class="side-panel">
-      <h4>对比分析</h4>
-      <div style="display:flex;flex-direction:column;gap:7px;">
-        <input type="text" id="compareA" placeholder="实体A名称..." style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:8px 10px;font-size:13px;font-family:var(--font-ui);outline:none;">
-        <input type="text" id="compareB" placeholder="实体B名称..." style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:8px 10px;font-size:13px;font-family:var(--font-ui);outline:none;">
-        <button onclick="compareEntities()" style="background:var(--accent-soft);border:1px solid var(--accent-dim);color:var(--accent);border-radius:var(--radius-sm);padding:9px;font-size:13px;cursor:pointer;font-family:var(--font-ui);font-weight:500;">生成对比报告</button>
+      <h4>Compare</h4>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <input type="text" id="compareA" placeholder="Entity A..." />
+        <input type="text" id="compareB" placeholder="Entity B..." />
+        <button onclick="compareEntities()" class="btn-secondary">Generate Report</button>
       </div>
-      <div id="compareResult" style="margin-top:8px;font-size:12px;color:var(--text-dim);max-height:200px;overflow-y:auto;line-height:1.7;"></div>
+      <div id="compareResult" style="margin-top:6px;font-size:11px;color:var(--text-dim);max-height:186px;overflow-y:auto;line-height:1.7;"></div>
     </div>
 
+    <!-- Stats -->
     <div class="side-panel">
-      <h4>图谱统计 <button class="refresh-logs-btn" onclick="loadQuality()" style="float:right;">质量报告</button></h4>
+      <h4>Stats <button class="refresh-logs-btn" onclick="loadQuality()" style="float:right;">Quality</button></h4>
       <div class="stats-grid">
-        <div class="stat-cell"><div class="val" id="statNodes">-</div><div class="lbl">节点总数</div></div>
-        <div class="stat-cell"><div class="val" id="statRels">-</div><div class="lbl">关系总数</div></div>
-        <div class="stat-cell"><div class="val" id="statLabels">-</div><div class="lbl">实体类型</div></div>
-        <div class="stat-cell"><div class="val" id="statRelTypes">-</div><div class="lbl">关系类型</div></div>
+        <div class="stat-cell"><div class="val" id="statNodes">-</div><div class="lbl">Nodes</div></div>
+        <div class="stat-cell"><div class="val" id="statRels">-</div><div class="lbl">Rels</div></div>
+        <div class="stat-cell"><div class="val" id="statLabels">-</div><div class="lbl">Labels</div></div>
+        <div class="stat-cell"><div class="val" id="statRelTypes">-</div><div class="lbl">Rel Types</div></div>
       </div>
     </div>
 
+    <!-- Node Detail -->
     <div class="side-panel">
-      <h4>节点详情</h4>
-      <div id="nodeDetail">点击图谱节点查看详情</div>
+      <h4>Node Detail</h4>
+      <div id="nodeDetail">Click a node to inspect</div>
     </div>
 
+    <!-- Ingest -->
     <div class="side-panel">
-      <h4>数据录入</h4>
+      <h4>Data Ingest</h4>
       <div class="ingest-area">
-        <textarea id="ingestText" placeholder="输入工业机器人相关文本，AI会自动抽取实体和关系...&#10;例：FANUC M-10iA是6轴弧焊机器人，负载10kg，臂展1420mm，重复定位精度0.03mm"></textarea>
+        <textarea id="ingestText" placeholder="Paste industrial robot text...&#10;e.g. FANUC M-10iA is a 6-axis arc welding robot, 10kg payload, 1420mm reach, 0.03mm repeatability"></textarea>
         <div class="ingest-actions">
-          <button class="btn-primary" onclick="ingestText()">提交录入</button>
-          <button class="btn-secondary" onclick="document.getElementById('ingestFile').click()">上传文件</button>
+          <button class="btn-primary" onclick="ingestText()">Submit</button>
+          <button class="btn-secondary" onclick="document.getElementById('ingestFile').click()">Upload File</button>
         </div>
-        <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:var(--text-dim);cursor:pointer">
-          <input type="checkbox" id="ingestUseLLM" style="accent-color:var(--accent)" /> 使用 AI 提取（勾选更慢但更准，CAD 文件可取消勾选走快速规则提取）
+        <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:11px;color:var(--text-dim);cursor:pointer">
+          <input type="checkbox" id="ingestUseLLM" style="accent-color:var(--accent)" /> AI extraction (slower, more accurate)
         </label>
-        <input type="file" id="ingestFile" accept=".csv,.pdf,.txt,.md,.dwg,.dxf,.step,.stp,.igs,.iges" onchange="ingestFile(this)" />
+        <input type="file" id="ingestFile" accept=".csv,.pdf,.txt,.md,.dwg,.dxf,.step,.stp,.igs,.iges" onchange="ingestFile(this)" style="display:none" />
         <div class="ingest-status" id="ingestStatus"></div>
       </div>
     </div>
 
+    <!-- Upload Log -->
     <div class="side-panel">
-      <h4>上传记录 <button class="refresh-logs-btn" onclick="loadIngestLogs()">刷新</button></h4>
-      <div class="log-list" id="logList">点击刷新加载记录</div>
+      <h4>Upload Log <button class="refresh-logs-btn" onclick="loadIngestLogs()" style="float:right;">Refresh</button></h4>
+      <div class="log-list" id="logList">Click refresh to load</div>
     </div>
+
   </div>
 </div>
 
+<!-- ============================================================
+     MAIN AREA
+     ============================================================ -->
 <div id="main">
+
+  <!-- Graph View -->
   <div id="graph-view">
     <div id="graph-container">
       <div class="graph-loading" id="graphLoading"><div class="spinner"></div></div>
     </div>
     <div class="graph-tooltip" id="tooltip"></div>
     <div class="graph-controls">
-      <button onclick="zoomIn()">放大</button>
-      <button onclick="zoomOut()">缩小</button>
-      <button onclick="resetZoom()">重置</button>
-      <button onclick="loadFullGraph()">全貌</button>
+      <button onclick="zoomIn()">Zoom +</button>
+      <button onclick="zoomOut()">Zoom –</button>
+      <button onclick="resetZoom()">Reset</button>
+      <button onclick="loadFullGraph()">Full</button>
     </div>
     <div class="graph-legend" id="legend"></div>
   </div>
 
+  <!-- Chat View -->
   <div id="chat-view">
     <div id="chat-messages"></div>
     <div id="chat-input-area">
       <div class="chat-input-wrap">
-        <textarea id="chatInput" rows="1" placeholder="输入问题，如：FANUC M-20iA 的负载和精度是多少？"
-          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();chatSend()}"></textarea>
-        <button id="chatSendBtn" onclick="chatSend()">↑</button>
+        <textarea id="chatInput" rows="1" placeholder="Ask about robots, parts, specs..."
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();chatSend()}"></textarea>
+        <button id="chatSendBtn" onclick="chatSend()">&uarr;</button>
       </div>
-      <div class="chat-hint">Enter 发送 &middot; Shift + Enter 换行 &middot; 基于知识图谱检索增强回答</div>
+      <div class="chat-hint">Enter send · Shift+Enter newline · RAG-powered</div>
     </div>
   </div>
+
 </div>
 
-<script>
-const API_BASE = window.location.origin + '/api/v1';
-const LABEL_COLORS = {
-  Robot: '#3b82f6', Manufacturer: '#f59e0b', Component: '#10b981',
-  Reducer: '#84cc16', ServoMotor: '#eab308', Controller: '#8b5cf6',
-  Sensor: '#ec4899', ApplicationScenario: '#f97316', Process: '#06b6d4',
-  EndEffector: '#6366f1', Standard: '#14b8a6', Material: '#22c55e',
-  Software: '#a855f7', IngestLog: '#94a3b8'
-};
-const LABEL_ZH = {
-  Robot: '机器人', Manufacturer: '制造商', Component: '零部件',
-  Reducer: '减速器', ServoMotor: '伺服电机', Controller: '控制器',
-  Sensor: '传感器', ApplicationScenario: '应用场景', Process: '工艺',
-  EndEffector: '末端执行器', Standard: '标准规范', Material: '加工材料',
-  Software: '软件系统', IngestLog: '摄入日志'
-};
+<!-- ============================================================
+     SCRIPTS
+     ============================================================ -->
+<script src="/js/shared.js"></script>
+<script src="/js/graph.js"></script>
+<script src="/js/chat.js"></script>
+<script src="/js/ingest.js"></script>
 
+<script>
+/* ---- View Switching ---- */
 function switchView(view) {
   document.querySelectorAll('#sidebar nav a').forEach(a => a.classList.remove('active'));
-  document.querySelector('[data-view="' + view + '"]').classList.add('active');
-  var graphView = document.getElementById('graph-view');
-  var chatView = document.getElementById('chat-view');
-  var graphPanels = document.getElementById('graph-panels');
+  document.querySelector(`[data-view="${view}"]`).classList.add('active');
+
+  const graphView = document.getElementById('graph-view');
+  const chatView  = document.getElementById('chat-view');
+  const graphPanels = document.getElementById('graph-panels');
 
   if (view === 'chat') {
     graphView.classList.add('hidden');
@@ -615,771 +180,21 @@ function switchView(view) {
     chatView.classList.remove('visible');
     graphPanels.classList.add('visible');
     if (!_graphInit) { initGraph(); _graphInit = true; loadStats(); }
-    setTimeout(function() {
+    setTimeout(() => {
       if (simulation) { simulation.alpha(0.1).restart(); }
-      d3.select('#graph-container svg').attr('width', graphView.clientWidth).attr('height', graphView.clientHeight);
+      const cw = document.getElementById('graph-container').clientWidth;
+      const ch = document.getElementById('graph-container').clientHeight;
+      d3.select('#graph-container svg').attr('width', cw).attr('height', ch);
     }, 80);
   }
 }
-var _graphInit = false, _chatInit = false;
 
-var simulation, svg, g, linkGroup, nodeGroup, zoomBehavior;
-var currentNodes = [], currentLinks = [], filteredTypes = new Set();
-var allEntitiesCache = [];
-
-function initGraph() {
-  var container = document.getElementById('graph-container');
-  var w = container.clientWidth;
-  var h = container.clientHeight;
-
-  svg = d3.select('#graph-container').append('svg').attr('width', w).attr('height', h);
-  g = svg.append('g');
-  linkGroup = g.append('g').attr('class', 'links');
-  nodeGroup = g.append('g').attr('class', 'nodes');
-
-  simulation = d3.forceSimulation()
-    .force('link', d3.forceLink().id(function(d) { return d.id; }).distance(140))
-    .force('charge', d3.forceManyBody().strength(-500))
-    .force('center', d3.forceCenter(w / 2, h / 2))
-    .force('collision', d3.forceCollide().radius(48));
-
-  zoomBehavior = d3.zoom().scaleExtent([0.08, 5]).on('zoom', function(event) {
-    g.attr('transform', event.transform);
-  });
-  svg.call(zoomBehavior);
-
-  simulation.on('tick', function() {
-    linkGroup.selectAll('line')
-      .attr('x1', function(d) { return d.source.x; }).attr('y1', function(d) { return d.source.y; })
-      .attr('x2', function(d) { return d.target.x; }).attr('y2', function(d) { return d.target.y; });
-    nodeGroup.selectAll('g.node').attr('transform', function(d) { return 'translate(' + d.x + ',' + d.y + ')'; });
-  });
-
-  window.addEventListener('resize', function() {
-    var cw = document.getElementById('graph-container').clientWidth;
-    var ch = document.getElementById('graph-container').clientHeight;
-    svg.attr('width', cw).attr('height', ch);
-    simulation.force('center', d3.forceCenter(cw / 2, ch / 2));
-  });
-
-  buildLegend();
-  document.getElementById('graphLoading').style.display = 'none';
-}
-
-function updateGraph(data) {
-  document.getElementById('graphLoading').style.display = 'none';
-
-  var rawNodes = (data.nodes || []).filter(function(n) {
-    var lbl = n.labels && n.labels[0] ? n.labels[0] : 'Unknown';
-    return filteredTypes.size === 0 || !filteredTypes.has(lbl);
-  });
-
-  currentNodes = rawNodes.map(function(n) {
-    return Object.assign({}, n, { id: n.id || ((n.labels && n.labels[0] || 'Unknown') + '::' + ((n.properties && n.properties.name) || '')) });
-  });
-
-  var nodeIds = new Set(currentNodes.map(function(n) { return n.id; }));
-  currentLinks = (data.edges || []).filter(function(e) {
-    return nodeIds.has(e.source) && nodeIds.has(e.target);
-  }).map(function(e) {
-    return Object.assign({}, e, { source: e.source, target: e.target });
-  });
-
-  linkGroup.selectAll('line').data(currentLinks, function(d) { return d.source + '-' + (d.type || '') + '-' + d.target; })
-    .join('line')
-    .attr('stroke', '#c4d3f6').attr('stroke-width', 1.8).attr('stroke-opacity', 0.7);
-
-  var nodes = nodeGroup.selectAll('g.node').data(currentNodes, function(d) { return d.id; });
-  nodes.exit().remove();
-  var nodesEnter = nodes.enter().append('g').attr('class', 'node').style('cursor', 'pointer')
-    .call(d3.drag()
-      .on('start', function(event, d) { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-      .on('drag', function(event, d) { d.fx = event.x; d.fy = event.y; })
-      .on('end', function(event, d) { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
-    );
-
-  nodesEnter.append('circle')
-    .attr('r', 22)
-    .attr('fill', function(d) { return LABEL_COLORS[d.labels && d.labels[0]] || '#94a3b8'; })
-    .attr('stroke', '#ffffff').attr('stroke-width', 2.5)
-    .attr('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))')
-    .on('mouseover', function(event, d) { showTooltip(event, d); })
-    .on('mouseout', hideTooltip)
-    .on('click', function(event, d) { showNodeDetail(d); });
-
-  nodesEnter.append('text')
-    .attr('dy', 36).attr('text-anchor', 'middle')
-    .attr('fill', function(d) { return LABEL_COLORS[d.labels && d.labels[0]] || '#64748b'; })
-    .attr('font-size', 13).attr('font-weight', 500)
-    .text(function(d) {
-      var name = (d.properties && d.properties.name) || d.id || '';
-      return name.length > 16 ? name.substring(0, 15) + '...' : name;
-    });
-
-  nodes.select('circle').attr('fill', function(d) { return LABEL_COLORS[d.labels && d.labels[0]] || '#94a3b8'; });
-  nodes.select('text').text(function(d) {
-    var name = (d.properties && d.properties.name) || d.id || '';
-    return name.length > 16 ? name.substring(0, 15) + '...' : name;
-  });
-
-  simulation.nodes(currentNodes);
-  simulation.force('link').links(currentLinks);
-  simulation.alpha(1).restart();
-}
-
-function showTooltip(event, d) {
-  var tt = document.getElementById('tooltip');
-  var container = document.getElementById('graph-view');
-  var rect = container.getBoundingClientRect();
-  var props = d.properties || {};
-  var label = d.labels && d.labels[0] ? d.labels[0] : 'Unknown';
-  var labelZh = LABEL_ZH[label] || label;
-  var html = '<strong style="color:' + (LABEL_COLORS[label] || '#999') + '">' + labelZh + ' / ' + label + '</strong><br>';
-  html += '<strong style="font-size:15px">' + (props.name || d.id) + '</strong><br>';
-  Object.entries(props).slice(0, 6).forEach(function(entry) {
-    if (entry[0] !== 'name' && entry[1] !== null && entry[1] !== undefined && entry[1] !== '') {
-      html += '<span style="color:#8a9bb8">' + entry[0] + ':</span> ' + entry[1] + '<br>';
-    }
-  });
-  tt.innerHTML = html;
-  tt.style.display = 'block';
-  var left = event.pageX - rect.left + 14;
-  var top = event.pageY - rect.top + 14;
-  if (left + 340 > rect.width) left = rect.width - 340;
-  if (top + 200 > rect.height) top = rect.height - 200;
-  tt.style.left = Math.max(0, left) + 'px';
-  tt.style.top = Math.max(0, top) + 'px';
-}
-
-function hideTooltip() { document.getElementById('tooltip').style.display = 'none'; }
-
-function showNodeDetail(d) {
-  var detail = document.getElementById('nodeDetail');
-  var props = d.properties || {};
-  var label = d.labels && d.labels[0] ? d.labels[0] : 'Unknown';
-  var labelZh = LABEL_ZH[label] || label;
-  var color = LABEL_COLORS[label] || '#94a3b8';
-  var nodeNameVal = props.name || d.id || '';
-  var html = '<div class="detail-name"><span class="detail-label" style="background:' + color + '">' + labelZh + '</span> ' + escapeHtml(nodeNameVal) + '</div>';
-  html += '<button onclick="deleteNode(\'' + label + '\',\'' + nodeNameVal.replace(/'/g, "\\'") + '\');event.stopPropagation()" style="margin-bottom:8px;padding:3px 10px;border-radius:3px;border:1px solid #ef4444;background:transparent;color:#ef4444;cursor:pointer;font-size:11px;font-family:var(--font-ui)">删除此节点</button>';
-  var propNames = Object.keys(props);
-  if (propNames.length > 0) {
-    propNames.forEach(function(k) {
-      if (props[k] !== null && props[k] !== undefined && props[k] !== '') {
-        html += '<div class="detail-row"><span>' + k + ':</span> ' + props[k] + '</div>';
-      }
-    });
-  } else {
-    html += '<div class="detail-row" style="color:var(--text-dim)">无更多属性</div>';
-  }
-  var nodeName = props.name || '';
-
-  fetch(API_BASE + '/query/neighbors/' + label + '/' + encodeURIComponent(nodeName) + '?limit=20')
-    .then(function(r) { return r.json(); }).then(function(data) {
-      if (data && data.length > 0) {
-        html += '<div class="neighbor-section"><strong style="color:var(--accent);font-size:12px">关联节点:</strong>';
-        data.forEach(function(n) {
-          var nbName = (n.node && n.node.name) || 'Unknown';
-          html += '<div class="detail-row" style="margin-left:8px">&rarr; <span style="color:var(--accent-dim)">' + (n.relation_type || '') + '</span>: ' + nbName + '</div>';
-        });
-        html += '</div>';
-      }
-      detail.innerHTML = html;
-    }).catch(function() { detail.innerHTML = html; });
-}
-
-async function searchEntities() {
-  var keyword = document.getElementById('searchInput').value.trim();
-  if (!keyword) return;
-  document.getElementById('graphLoading').style.display = 'flex';
-  try {
-    var resp = await fetch(API_BASE + '/subgraph/search/' + encodeURIComponent(keyword) + '?depth=2&limit=200');
-    var data = await resp.json();
-    updateGraph(data);
-    var resultsDiv = document.getElementById('searchResults');
-    resultsDiv.innerHTML = '';
-    var nodes = data.nodes || [];
-    if (nodes.length === 0) {
-      resultsDiv.innerHTML = '<div style="font-size:13px;color:var(--text-dim);padding:8px">未找到匹配实体</div>';
-    } else {
-      nodes.slice(0, 25).forEach(function(n) {
-        var label = n.labels && n.labels[0] ? n.labels[0] : 'Unknown';
-        var labelZh = LABEL_ZH[label] || label;
-        var color = LABEL_COLORS[label] || '#94a3b8';
-        var item = document.createElement('div');
-        item.className = 'node-item';
-        item.innerHTML = '<span class="node-dot" style="background:' + color + '"></span>' + (n.properties && n.properties.name || n.id) + ' <span style="font-size:10px;color:var(--text-dim)">' + labelZh + '</span>';
-        item.onclick = function() { showNodeDetail(n); };
-        resultsDiv.appendChild(item);
-      });
-    }
-  } catch (e) { console.error('Search failed:', e); }
-  document.getElementById('graphLoading').style.display = 'none';
-}
-
-async function loadFullGraph() {
-  document.getElementById('graphLoading').style.display = 'flex';
-  filteredTypes = new Set();
-  buildLegend();
-  try {
-    // Try multiple search terms to find matching data
-    var keywords = ['Component', 'Robot', 'Manufacturer', 'FANUC', 'ABB', 'CHX'];
-    var data = null;
-    for (var i = 0; i < keywords.length; i++) {
-      var resp = await fetch(API_BASE + '/subgraph/search/' + encodeURIComponent(keywords[i]) + '?depth=3&limit=300');
-      data = await resp.json();
-      if (data.nodes && data.nodes.length > 0) break;
-    }
-    if (!data || !data.nodes || data.nodes.length === 0) {
-      document.getElementById('graphLoading').style.display = 'none';
-      return;
-    }
-    updateGraph(data);
-  } catch (e) { console.error('Full graph load failed:', e); }
-  document.getElementById('graphLoading').style.display = 'none';
-}
-
-async function loadStats() {
-  try {
-    var resp = await fetch(API_BASE + '/query/stats');
-    var data = await resp.json();
-    document.getElementById('statNodes').textContent = data.total_nodes || 0;
-    document.getElementById('statRels').textContent = data.total_relations || 0;
-    document.getElementById('statLabels').textContent = (data.node_labels || []).length;
-    document.getElementById('statRelTypes').textContent = (data.relation_types || []).length;
-
-    if (data.top_degree_nodes && data.top_degree_nodes.length > 0) {
-      var src = document.getElementById('pathSource');
-      var tgt = document.getElementById('pathTarget');
-      var selList = [src, tgt];
-      selList.forEach(function(sel) {
-        // Only populate once (preserve first default option)
-        while (sel.options.length > 1) sel.remove(1);
-        data.top_degree_nodes.forEach(function(n) {
-          var opt = document.createElement('option');
-          opt.value = n.name || '';
-          opt.textContent = (n.name || '') + ' (' + (n.label || '?') + ')';
-          opt.setAttribute('data-label', n.label || '');
-          sel.appendChild(opt);
-        });
-      });
-    }
-  } catch (e) { console.error('Stats failed:', e); }
-}
-
-function updatePathTarget() {}
-
-async function findPath() {
-  var srcSel = document.getElementById('pathSource');
-  var tgtSel = document.getElementById('pathTarget');
-  var srcName = srcSel.value;
-  var tgtName = tgtSel.value;
-  if (!srcName || !tgtName) { alert('请选择起始和目标实体'); return; }
-  if (srcName === tgtName) { alert('起始和目标不能相同'); return; }
-
-  var srcLabel = srcSel.selectedOptions[0] ? srcSel.selectedOptions[0].getAttribute('data-label') || '' : '';
-  var tgtLabel = tgtSel.selectedOptions[0] ? tgtSel.selectedOptions[0].getAttribute('data-label') || '' : '';
-
-  document.getElementById('graphLoading').style.display = 'flex';
-  try {
-    var url = API_BASE + '/query/shortest-path?source_label=' + encodeURIComponent(srcLabel) + '&source_name=' + encodeURIComponent(srcName) + '&target_label=' + encodeURIComponent(tgtLabel) + '&target_name=' + encodeURIComponent(tgtName) + '&max_depth=5';
-    var resp = await fetch(url);
-    var data = await resp.json();
-    if (!data || data.length === 0) {
-      alert('未找到路径');
-      document.getElementById('graphLoading').style.display = 'none';
-      return;
-    }
-    var path = data[0];
-    var nodes = (path.nodes || []).map(function(n, i) {
-      var label = n.labels && n.labels[0] || 'Node';
-      var name = n.properties && n.properties.name || 'node_' + i;
-      return {
-        id: label + '::' + name,
-        labels: n.labels || ['Unknown'],
-        properties: n.properties || {},
-        x: undefined, y: undefined
-      };
-    });
-    // Build name→label lookup so edges can use node IDs correctly
-    var nameToLabel = {};
-    nodes.forEach(function(n) {
-      var nm = (n.properties && n.properties.name) || '';
-      nameToLabel[nm] = n.labels && n.labels[0] || 'Unknown';
-    });
-    var edges = (path.edges || []).map(function(e) {
-      var sName = e.start || '';
-      var tName = e.end || '';
-      var sLabel = nameToLabel[sName] || 'Unknown';
-      var tLabel = nameToLabel[tName] || 'Unknown';
-      return {
-        source: sLabel + '::' + sName,
-        target: tLabel + '::' + tName,
-        type: e.type || 'RELATED',
-        properties: e.properties || {}
-      };
-    });
-    updateGraph({ nodes: nodes, edges: edges });
-  } catch (e) { console.error('Path find failed:', e); }
-  document.getElementById('graphLoading').style.display = 'none';
-}
-
-function buildLegend() {
-  var legend = document.getElementById('legend');
-  legend.innerHTML = '';
-  Object.entries(LABEL_COLORS).forEach(function(entry) {
-    var label = entry[0], color = entry[1];
-    var isFiltered = filteredTypes.has(label);
-    var div = document.createElement('div');
-    div.className = 'legend-item' + (isFiltered ? ' filtered' : '');
-    div.innerHTML = '<span class="legend-dot" style="background:' + color + '"></span>' + (LABEL_ZH[label] || label);
-    div.onclick = function() {
-      if (filteredTypes.has(label)) {
-        filteredTypes.delete(label);
-      } else {
-        filteredTypes.add(label);
-      }
-      buildLegend();
-      if (currentNodes.length > 0 && currentLinks.length > 0) {
-        updateGraph({ nodes: currentNodes, edges: currentLinks });
-      }
-    };
-    legend.appendChild(div);
-  });
-}
-
-function zoomIn() { svg.transition().duration(300).call(zoomBehavior.scaleBy, 1.4); }
-function zoomOut() { svg.transition().duration(300).call(zoomBehavior.scaleBy, 0.7); }
-function resetZoom() { svg.transition().duration(400).call(zoomBehavior.transform, d3.zoomIdentity); }
-
-// ======================== CHAT ========================
-var CHAT_API = '/api/v1/ask/stream';
-var isStreaming = false;
-
-function scrollChatBottom() {
-  var el = document.getElementById('chat-messages');
-  if (el) el.scrollTop = el.scrollHeight;
-}
-
-function showChatEmpty() {
-  var el = document.getElementById('chat-messages');
-  el.innerHTML = '<div class="chat-empty">' +
-    '<div class="ce-icon">&Sigma;</div>' +
-    '<h2>基于知识图谱的工业机器人智能问答</h2>' +
-    '<p>检索结构化知识，辅助技术决策</p>' +
-    '<div class="ce-examples">' +
-      '<button onclick="chatExample(this)">FANUC M-20iA 的负载和精度？</button>' +
-      '<button onclick="chatExample(this)">ABB有哪些型号的焊接机器人？</button>' +
-      '<button onclick="chatExample(this)">KUKA机器人用什么控制系统？</button>' +
-      '<button onclick="chatExample(this)">比较FANUC和ABB的六轴机器人</button>' +
-      '<button onclick="chatExample(this)">RV减速器和谐波减速器有什么区别？</button>' +
-    '</div></div>';
-}
-
-function chatExample(btn) {
-  document.getElementById('chatInput').value = btn.textContent.trim();
-  chatSend();
-}
-
-function chatAddMsg(role, content) {
-  var el = document.getElementById('chat-messages');
-  var es = el.querySelector('.chat-empty'); if (es) es.remove();
-  var row = document.createElement('div');
-  row.className = 'msg-row ' + role;
-  var label = document.createElement('div');
-  label.className = 'msg-label';
-  label.textContent = role === 'user' ? '提问' : '知识助手';
-  var bubble = document.createElement('div');
-  bubble.className = 'msg-bubble';
-  bubble.innerHTML = content;
-  row.appendChild(label);
-  row.appendChild(bubble);
-  el.appendChild(row);
-  return row;
-}
-
-function chatAddContextCard(contextText) {
-  var el = document.getElementById('chat-messages');
-  var es = el.querySelector('.chat-empty'); if (es) es.remove();
-  var card = document.createElement('div');
-  card.className = 'context-card';
-  card.innerHTML = '<div class="ctx-label">检索到的相关知识</div><pre>' + escapeHtml(contextText) + '</pre>';
-  el.appendChild(card);
-  return card;
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-function simpleMd(text) {
-  return text
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
-    .replace(/<\/ul>\n<ul>/g, '')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/\n/g, '<br>');
-}
-
-async function chatSend() {
-  if (isStreaming) return;
-  var input = document.getElementById('chatInput');
-  var btn = document.getElementById('chatSendBtn');
-  var question = input.value.trim();
-  if (!question) return;
-
-  input.value = '';
-  input.style.height = 'auto';
-  isStreaming = true;
-  btn.disabled = true;
-
-  chatAddMsg('user', escapeHtml(question));
-  scrollChatBottom();
-
-  var row = document.createElement('div');
-  row.className = 'msg-row assistant';
-  var label = document.createElement('div');
-  label.className = 'msg-label'; label.textContent = '知识助手';
-  var bubble = document.createElement('div');
-  bubble.className = 'msg-bubble';
-  row.appendChild(label);
-  row.appendChild(bubble);
-  document.getElementById('chat-messages').appendChild(row);
-  scrollChatBottom();
-
-  var cursor = document.createElement('span');
-  cursor.className = 'typing-cursor';
-  bubble.appendChild(cursor);
-
-  var fullText = '';
-  var contextCard = null;
-
-  try {
-    var resp = await fetch(CHAT_API, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({question: question, top_k: 8})
-    });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-
-    var reader = resp.body.getReader();
-    var decoder = new TextDecoder();
-    var buf = '';
-
-    while (true) {
-      var result = await reader.read();
-      if (result.done) break;
-      buf += decoder.decode(result.value, {stream: true});
-      var lines = buf.split('\n');
-      buf = lines.pop() || '';
-
-      for (var i = 0; i < lines.length; i++) {
-        var line = lines[i];
-        if (!line.startsWith('data: ')) continue;
-        var json = line.slice(6);
-        try {
-          var data = JSON.parse(json);
-          if (data.type === 'meta' && data.context && !contextCard) {
-            contextCard = chatAddContextCard(data.context);
-            scrollChatBottom();
-          } else if (data.type === 'token') {
-            fullText += data.content;
-            bubble.innerHTML = '<p>' + simpleMd(escapeHtml(fullText)) + '</p>';
-            bubble.appendChild(cursor);
-            scrollChatBottom();
-          } else if (data.type === 'done') {
-            if (cursor.parentNode) cursor.remove();
-          } else if (data.type === 'error') {
-            bubble.innerHTML = '<p style="color:#ef4444">服务异常：' + escapeHtml(data.message) + '</p>';
-          }
-        } catch(e) {}
-      }
-    }
-  } catch (e) {
-    bubble.innerHTML = '<p style="color:#ef4444">请求失败：' + escapeHtml(e.message) + '</p>';
-  }
-
-  if (cursor.parentNode) cursor.remove();
-  if (fullText) {
-    bubble.innerHTML = '<p>' + simpleMd(escapeHtml(fullText)) + '</p>';
-  } else if (bubble.innerHTML.indexOf('请求失败') === -1 && bubble.innerHTML.indexOf('服务异常') === -1) {
-    bubble.innerHTML = '<p style="color:var(--text-dim)">未能生成回答，请检查后端服务</p>';
-  }
-
-  isStreaming = false;
-  btn.disabled = false;
-  scrollChatBottom();
-}
-
-document.getElementById('chatInput').addEventListener('input', function() {
-  this.style.height = 'auto';
-  this.style.height = Math.min(this.scrollHeight, 140) + 'px';
-});
-
-// ======================== DATA INGEST ========================
-async function ingestText() {
-  var textarea = document.getElementById('ingestText');
-  var statusEl = document.getElementById('ingestStatus');
-  var text = textarea.value.trim();
-  if (!text) { statusEl.className = 'ingest-status error'; statusEl.textContent = '请输入文本'; return; }
-  if (text.length < 10) { statusEl.className = 'ingest-status error'; statusEl.textContent = '文本太短，至少10个字符'; return; }
-
-  statusEl.className = 'ingest-status'; statusEl.textContent = '正在分析提取...';
-  try {
-    var resp = await fetch(API_BASE + '/ingest/text', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text: text, use_llm: true, use_rule_fallback: true})
-    });
-    var data = await resp.json();
-    if (data.status === 'success') {
-      statusEl.className = 'ingest-status success';
-      statusEl.textContent = '录入成功！实体 ' + data.entities_count + ' 个，关系 ' + data.relations_count + ' 条';
-      textarea.value = '';
-      loadStats();
-      setTimeout(loadFullGraph, 500);
-    } else {
-      statusEl.className = 'ingest-status error'; statusEl.textContent = '录入失败：' + (data.message || '未知错误');
-    }
-  } catch (e) {
-    statusEl.className = 'ingest-status error'; statusEl.textContent = '请求失败：' + e.message;
-  }
-}
-
-async function ingestFile(input) {
-  var statusEl = document.getElementById('ingestStatus');
-  var file = input.files[0];
-  if (!file) return;
-
-  // Check duplicate filename
-  if (_knownFiles.length > 0 && _knownFiles.indexOf(file.name) !== -1) {
-    var ok = confirm('⚠️ 文件 "' + file.name + '" 已经上传过，图谱中已存在相关数据。\n\n是否仍要继续上传？\n（继续上传会合并数据，不会产生重复实体）');
-    if (!ok) {
-      statusEl.className = 'ingest-status'; statusEl.textContent = '已取消上传（文件已存在）';
-      input.value = '';
-      return;
-    }
-  }
-
-  var useLLM = document.getElementById('ingestUseLLM').checked;
-  var statusPrefix = useLLM ? '正在处理' : '正在快速处理';
-  statusEl.className = 'ingest-status'; statusEl.textContent = statusPrefix + ' ' + file.name + ' (0s)...';
-
-  var startTime = Date.now();
-  var timerId = setInterval(function() {
-    var elapsed = Math.round((Date.now() - startTime) / 1000);
-    statusEl.textContent = statusPrefix + ' ' + file.name + ' (' + elapsed + 's)...';
-  }, 1000);
-
-  var formData = new FormData();
-  formData.append('file', file);
-
-  var controller = new AbortController();
-  var timeoutId = setTimeout(function() { controller.abort(); }, 300000);
-
-  try {
-    var resp = await fetch(API_BASE + '/ingest/file?use_llm=' + useLLM, {
-      method: 'POST',
-      body: formData,
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    clearInterval(timerId);
-
-    var elapsed = Math.round((Date.now() - startTime) / 1000);
-    var data = await resp.json();
-    if (data.status === 'success') {
-      statusEl.className = 'ingest-status success';
-      statusEl.textContent = '处理完成 (' + elapsed + 's)！实体 ' + data.entities_count + ' 个，关系 ' + data.relations_count + ' 条';
-      input.value = '';
-      loadStats();
-      setTimeout(loadFullGraph, 500);
-    } else {
-      statusEl.className = 'ingest-status error'; statusEl.textContent = '处理失败：' + (data.message || '未知错误');
-    }
-  } catch (e) {
-    clearTimeout(timeoutId);
-    clearInterval(timerId);
-    if (e.name === 'AbortError') {
-      statusEl.className = 'ingest-status error'; statusEl.textContent = '处理超时（>5分钟），请取消勾选 AI 提取后重试';
-    } else {
-      statusEl.className = 'ingest-status error'; statusEl.textContent = '上传失败：' + (e.message || '网络错误');
-    }
-  }
-}
-
-// ======================== INGEST LOGS ========================
-var _knownFiles = [];
-
-async function loadIngestLogs() {
-  var el = document.getElementById('logList');
-  el.innerHTML = '<div style="font-size:12px;color:var(--text-dim);padding:8px">加载中...</div>';
-  var items = [];
-  var errors = 0;
-
-  // 1) Query graph files directly (works without IngestLog nodes)
-  try {
-    var r1 = await fetch(API_BASE + '/ingest/files');
-    if (r1.ok) {
-      var files = await r1.json();
-      for (var i = 0; i < files.length; i++) {
-        var f = files[i];
-        items.push({
-          filename: f.filename,
-          entities_count: f.cnt,
-          relations_count: 0,
-          timestamp: '',
-          success: true,
-          source: 'file'
-        });
-      }
-    } else { errors++; }
-  } catch (e) { errors++; }
-
-  // 2) Also query IngestLog entries
-  try {
-    var r2 = await fetch(API_BASE + '/ingest/logs?limit=30');
-    if (r2.ok) {
-      var logs = await r2.json();
-      for (var j = 0; j < logs.length; j++) {
-        var log = logs[j];
-        // Check if filename already covered by graph files
-        var dup = false;
-        for (var k = 0; k < items.length; k++) {
-          if (items[k].filename === log.filename) { dup = true; items[k].timestamp = items[k].timestamp || log.timestamp; break; }
-        }
-        if (!dup && log.filename) {
-          items.push({
-            filename: log.filename,
-            entities_count: log.entities_count || 0,
-            relations_count: log.relations_count || 0,
-            timestamp: log.timestamp || '',
-            success: log.success,
-            source: log.source || ''
-          });
-        }
-      }
-    } else { errors++; }
-  } catch (e) { errors++; }
-
-  if (errors >= 2) {
-    el.innerHTML = '<div style="font-size:12px;color:#ef4444;padding:8px">加载失败，请检查后端服务</div>';
-    return;
-  }
-  if (items.length === 0) {
-    el.innerHTML = '<div style="font-size:12px;color:var(--text-dim);padding:8px">暂无上传文件，上传 DWG/DXF 等文件后这里会显示记录</div>';
-    return;
-  }
-
-  el.innerHTML = '';
-  items.forEach(function(log) {
-    var row = document.createElement('div');
-    row.className = 'log-item';
-    var fn = log.filename || '未知文件';
-    var ts = log.timestamp ? log.timestamp.replace('T', ' ').substring(0, 19) : '';
-    var info = '<div class="log-info">' +
-      '<div class="log-fn">' + escapeHtml(fn) + '</div>' +
-      '<div class="log-meta">' + (ts || '历史文件') + ' &middot; 实体 ' + (log.entities_count || 0) + ' 关系 ' + (log.relations_count || 0) + '</div>' +
-      '</div>';
-    row.innerHTML = info;
-    var delBtn = document.createElement('button');
-    delBtn.className = 'log-del';
-    delBtn.textContent = '删除';
-    delBtn.onclick = function() {
-      if (confirm('确认删除文件 "' + fn + '" 关联的所有图谱数据？此操作不可撤销。')) {
-        deleteByFile(fn);
-      }
-    };
-    row.appendChild(delBtn);
-    el.appendChild(row);
-  });
-  _knownFiles = items.map(function(x) { return x.filename; });
-}
-
-async function deleteByFile(filename) {
-  try {
-    var resp = await fetch(API_BASE + '/ingest/file/' + encodeURIComponent(filename), { method: 'DELETE' });
-    var data = await resp.json();
-    alert('已删除 ' + (data.nodes_removed || 0) + ' 个节点');
-    loadIngestLogs();
-    loadStats();
-    loadFullGraph();
-  } catch (e) {
-    alert('删除失败：' + e.message);
-  }
-}
-
-async function deleteNode(label, name) {
-  if (!confirm('确认删除节点 "' + name + '" (' + label + ') 及其所有关系？')) return;
-  try {
-    var resp = await fetch(API_BASE + '/query/node/' + encodeURIComponent(label) + '/' + encodeURIComponent(name), { method: 'DELETE' });
-    var data = await resp.json();
-    document.getElementById('nodeDetail').innerHTML = '<div style="color:var(--text-dim)">节点已删除 (' + (data.nodes_removed || 0) + ' 个)</div>';
-    loadStats();
-    if (currentNodes.length > 0 && currentLinks.length > 0) {
-      updateGraph({ nodes: currentNodes, edges: currentLinks });
-    }
-  } catch (e) {
-    alert('删除失败：' + e.message);
-  }
-}
-
-// ======================== QUALITY & COMPARE ========================
-async function loadQuality() {
-  try {
-    var resp = await fetch(API_BASE + '/quality');
-    var data = await resp.json();
-    var html = '<div style="padding:8px"><strong>质量评分: ' + (data.quality_score || 0) + '/100</strong><br>';
-    html += '孤立节点: ' + (data.orphan_nodes ? data.orphan_nodes.length : 0) + '<br>';
-    html += '缺失属性: ' + (data.missing_key_props ? data.missing_key_props.length : 0) + '<br>';
-    html += '潜在重复: ' + (data.potential_duplicates ? data.potential_duplicates.length : 0) + '<br>';
-    html += '低置信度: ' + (data.low_confidence_facts ? data.low_confidence_facts.length : 0) + '</div>';
-    document.getElementById('nodeDetail').innerHTML = html;
-  } catch (e) { alert('质量报告加载失败：' + e.message); }
-}
-
-async function compareEntities() {
-  var a = document.getElementById('compareA').value.trim();
-  var b = document.getElementById('compareB').value.trim();
-  if (!a || !b) { alert('请输入两个实体名称'); return; }
-  var el = document.getElementById('compareResult');
-  el.innerHTML = '正在生成对比报告...';
-  try {
-    var resp = await fetch(API_BASE + '/compare', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({entity_a: a, entity_b: b})
-    });
-    var data = await resp.json();
-    if (data.status === 'success') {
-      el.innerHTML = '<div style="white-space:pre-wrap;font-size:13px;line-height:1.8;">' + simpleMd(data.comparison || '无对比结果') + '</div>';
-    } else {
-      el.innerHTML = '<div style="color:#ef4444">对比失败</div>';
-    }
-  } catch (e) { el.innerHTML = '<div style="color:#ef4444">请求失败：' + e.message + '</div>'; }
-}
-
-// Also show confidence/source in node detail and search results
-var _origShowNodeDetail = showNodeDetail;
-showNodeDetail = function(d) {
-  _origShowNodeDetail(d);
-  var detail = document.getElementById('nodeDetail');
-  var props = d.properties || {};
-  var extra = '';
-  if (props._confidence !== undefined) extra += '<div class="detail-row"><span>置信度:</span> ' + (props._confidence * 100).toFixed(0) + '%</div>';
-  if (props._source) extra += '<div class="detail-row"><span>来源:</span> ' + escapeHtml(props._source) + '</div>';
-  if (props.valid_from || props.valid_to) extra += '<div class="detail-row"><span>时间:</span> ' + (props.valid_from || '?') + ' ~ ' + (props.valid_to || '至今') + '</div>';
-  if (extra) detail.innerHTML += extra;
-};
-
-// Initialize
+/* ---- Init ---- */
 initGraph(); _graphInit = true;
 loadStats();
 loadIngestLogs();
 setTimeout(loadFullGraph, 300);
 </script>
+
 </body>
 </html>
