@@ -34,6 +34,15 @@ class DXFLoader:
 
     SUPPORTED_EXTENSIONS = {".dxf"}
 
+    @classmethod
+    def _is_internal_symbol(cls, name: str) -> bool:
+        """Only filter truly internal DXF constructs (model/paper space, empty names)."""
+        if not name or not name.strip():
+            return True
+        if name.startswith("*"):  # *Model_Space, *Paper_Space, anonymous blocks
+            return True
+        return False
+
     def load_metadata(self, file_path: str) -> DXFMetadata:
         path = Path(file_path)
         if not path.exists():
@@ -67,7 +76,7 @@ class DXFLoader:
         # Blocks (components / sub-assemblies)
         try:
             for block in doc.blocks:
-                if not block.name.startswith("*"):  # skip special blocks
+                if not self._is_internal_symbol(block.name):
                     meta.block_names.append(block.name)
             meta.block_count = len(meta.block_names)
         except Exception as e:
@@ -100,15 +109,16 @@ class DXFLoader:
                         pass
                 elif etype == "INSERT":
                     try:
-                        ins = {
-                            "name": entity.dxf.name,
-                            "layer": entity.dxf.layer,
-                        }
-                        if entity.dxf.hasattr("insert"):
-                            ins["x"] = round(entity.dxf.insert.x, 2)
-                            ins["y"] = round(entity.dxf.insert.y, 2)
-                        meta.inserts.append(ins)
-                        meta.keywords.add(entity.dxf.name)
+                        if not self._is_internal_symbol(entity.dxf.name):
+                            ins = {
+                                "name": entity.dxf.name,
+                                "layer": entity.dxf.layer,
+                            }
+                            if entity.dxf.hasattr("insert"):
+                                ins["x"] = round(entity.dxf.insert.x, 2)
+                                ins["y"] = round(entity.dxf.insert.y, 2)
+                            meta.inserts.append(ins)
+                            meta.keywords.add(entity.dxf.name)
                     except Exception:
                         pass
                 elif etype == "ATTRIB":

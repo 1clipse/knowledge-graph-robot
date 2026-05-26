@@ -40,7 +40,8 @@ class Neo4jClient:
                 "max_connection_pool_size": self._config.max_connection_pool_size,
                 "connection_timeout": self._config.connection_timeout,
             }
-            if not any(s in self._config.uri for s in ("+s", "+ssc")):
+            # Only force SSL for cloud URIs (neo4j:// or neo4j+s://)
+            if "+s" in self._config.uri or self._config.uri.startswith("neo4j://"):
                 driver_kwargs["ssl_context"] = ssl.create_default_context(cafile=certifi.where())
             self._driver = GraphDatabase.driver(self._config.uri, **driver_kwargs)
             self._driver.verify_connectivity()

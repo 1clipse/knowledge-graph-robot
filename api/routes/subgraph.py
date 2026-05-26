@@ -10,6 +10,16 @@ from graph.query import GraphQuery
 
 router = APIRouter()
 
+_INTERNAL_PROPS = {"_embedding"}  # strip from API responses to avoid huge payloads
+
+
+def _strip_internal(node: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove internal fields like _embedding from node properties before sending to frontend."""
+    props = node.get("properties", {})
+    for key in _INTERNAL_PROPS:
+        props.pop(key, None)
+    return node
+
 
 def _primary_label(labels: List[str]) -> str:
     """Return the primary domain label, skipping the internal 'Entity' base label."""
@@ -44,13 +54,24 @@ def search_subgraph(
             continue
         try:
             sub = graph_query.subgraph(_primary_label(labels), node["name"], depth, limit)
-            for n in sub.get("nodes", []):
-                node_id = n.get("id", "")
-                if node_id and node_id not in all_nodes:
-                    # Filter out Entity from displayed labels
-                    n["labels"] = [l for l in n.get("labels", []) if l != "Entity"]
-                    all_nodes[node_id] = n
-            all_edges.extend(sub.get("edges", []))
+            sub_nodes = sub.get("nodes", [])
+            if sub_nodes:
+                for n in sub_nodes:
+                    node_id = n.get("id", "")
+                    if node_id and node_id not in all_nodes:
+                        n["labels"] = [l for l in n.get("labels", []) if l != "Entity"]
+                        all_nodes[node_id] = n
+                all_edges.extend(sub.get("edges", []))
+            else:
+                # Isolated node — still include it standalone
+                clean_labels = [l for l in labels if l != "Entity"]
+                node_id = f"{clean_labels[0] if clean_labels else 'Unknown'}::{node['name']}"
+                if node_id not in all_nodes:
+                    all_nodes[node_id] = {
+                        "id": node_id,
+                        "labels": clean_labels,
+                        "properties": {k: v for k, v in node.items() if k != "_embedding"},
+                    }
         except Exception as e:
             logger.warning(f"Subgraph extraction for {node.get('name', '')} failed: {e}")
 
@@ -62,7 +83,7 @@ def search_subgraph(
             seen_edges.add(edge_key)
             unique_edges.append(edge)
 
-    return {"nodes": list(all_nodes.values()), "edges": unique_edges}
+    return {"nodes": [_strip_internal(n) for n in all_nodes.values()], "edges": unique_edges}
 
 
 @router.get("/subgraph/{label}/{name}", response_model=Dict[str, Any])
@@ -81,6 +102,7 @@ def get_subgraph(
         # Filter out Entity from displayed labels
         for n in result.get("nodes", []):
             n["labels"] = [l for l in n.get("labels", []) if l != "Entity"]
+        result["nodes"] = [_strip_internal(n) for n in result.get("nodes", [])]
         return result
     except Exception as e:
         logger.error(f"Subgraph extraction failed: {e}")

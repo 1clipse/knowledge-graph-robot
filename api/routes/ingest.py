@@ -137,6 +137,16 @@ class IngestTextRequest(BaseModel):
     use_rule_fallback: bool = Field(default=True, description="LLM失败时是否使用规则回退")
 
 
+def _is_valid_entity_name(name: str) -> bool:
+    """Filter out truly empty or internal CAD names only."""
+    if not name or not name.strip():
+        return False
+    name = name.strip()
+    if name.startswith("*") or name in ("_None",):
+        return False
+    return True
+
+
 def _dxf_meta_to_entities(meta: DXFMetadata, filename: str = "") -> ExtractionResult:
     """将 DXF 结构化元数据直接映射为知识图谱实体，不依赖 LLM"""
     entities: List[ExtractedEntity] = []
@@ -148,7 +158,7 @@ def _dxf_meta_to_entities(meta: DXFMetadata, filename: str = "") -> ExtractionRe
     component_names: set[str] = set()
     for name in meta.block_names:
         name = name.strip()
-        if name and len(name) >= 1:
+        if _is_valid_entity_name(name):
             entities.append(ExtractedEntity(name=name, type="Component",
                                             properties={"source": "DXF_BLOCK", "file": drawing_name}))
             component_names.add(name)
@@ -209,21 +219,11 @@ def _dxf_meta_to_entities(meta: DXFMetadata, filename: str = "") -> ExtractionRe
     for attr in meta.attributes:
         tag = attr.get("tag", "").strip()
         text_val = attr.get("text", "").strip()
-        if tag and text_val and len(tag) >= 2:
+        if _is_valid_entity_name(tag) and text_val and len(tag) >= 2:
             entities.append(ExtractedEntity(
                 name=tag,
                 type="Component",
                 properties={"value": text_val, "source": "DXF_ATTR"}
-            ))
-
-    # Dimensions → potential specification entities
-    for dim in meta.dimensions[:20]:
-        dim = dim.strip()
-        if dim:
-            entities.append(ExtractedEntity(
-                name=f"Dimension_{dim[:30]}",
-                type="Component",
-                properties={"dimension_value": dim, "source": "DXF_DIM"}
             ))
 
     return ExtractionResult(entities=entities, relations=relations)
@@ -473,6 +473,74 @@ async def _extract_knowledge(text: str, use_llm: bool) -> ExtractionResult:
         result = rule_extractor.extract(text)
 
     return result
+
+
+class BatchIngestResponse(BaseModel):
+    status: str
+    total_files: int = 0
+    success_count: int = 0
+    failed_count: int = 0
+    total_entities: int = 0
+    total_relations: int = 0
+    details: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+@router.post("/ingest/batch", response_model=BatchIngestResponse)
+async def ingest_batch(
+    files: List[UploadFile] = File(...),
+    use_llm: bool = True,
+):
+    """批量上传多个文件"""
+    response = BatchIngestResponse(status="success", total_files=len(files))
+
+    for file in files:
+        suffix = os.path.splitext(file.filename or "")[1].lower()
+        content = await file.read()
+
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+
+            if suffix == ".csv":
+                mapper = StructuredMapper()
+                result = mapper.map_csv(tmp_path)
+                _stamp_source(result, file.filename or "unknown.csv")
+                for e in result.entities:
+                    e.confidence = 1.0
+                for r in result.relations:
+                    r.confidence = 1.0
+                _write_to_graph(result)
+                _log_ingest("file", file.filename or "unknown.csv", len(result.entities), len(result.relations), True)
+                response.total_entities += len(result.entities)
+                response.total_relations += len(result.relations)
+                response.success_count += 1
+                response.details.append({"filename": file.filename, "status": "ok", "entities": len(result.entities), "relations": len(result.relations)})
+            else:
+                all_text, dxf_result = _load_file_content(tmp_path, suffix, file.filename or "unknown", content)
+                result = await _extract_knowledge(all_text, use_llm)
+                result.entities = dxf_result.entities + result.entities
+                result.relations = dxf_result.relations + result.relations
+
+                _stamp_source(result, file.filename or "unknown")
+                _write_to_graph(result)
+                _log_ingest("file", file.filename or "unknown", len(result.entities), len(result.relations), True)
+                response.total_entities += len(result.entities)
+                response.total_relations += len(result.relations)
+                response.success_count += 1
+                response.details.append({"filename": file.filename, "status": "ok", "entities": len(result.entities), "relations": len(result.relations)})
+
+        except Exception as e:
+            logger.error(f"Batch ingest failed for {file.filename}: {e}")
+            response.failed_count += 1
+            response.details.append({"filename": file.filename, "status": "failed", "error": str(e)})
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+    return response
 
 
 @router.post("/ingest/file", response_model=IngestResponse)

@@ -26,13 +26,13 @@
 
   <nav>
     <a class="active" data-view="graph" onclick="switchView('graph')">
-      <span class="nav-icon">&#x2261;</span> Graph
+      <span class="nav-icon">&#x2261;</span> 图谱
     </a>
     <a data-view="chat" onclick="switchView('chat')">
-      <span class="nav-icon">&Sigma;</span> Q&A
+      <span class="nav-icon">&Sigma;</span> 问答
     </a>
     <a data-view="graph" onclick="switchView('graph'); setTimeout(loadFullGraph, 100)">
-      <span class="nav-icon">&#x2304;</span> Full View
+      <span class="nav-icon">&#x2304;</span> 全景
     </a>
   </nav>
 
@@ -40,78 +40,78 @@
 
     <!-- Search -->
     <div class="side-panel">
-      <h4>Search Entities</h4>
+      <h4>实体搜索</h4>
       <div class="side-search">
-        <input type="text" id="searchInput" placeholder="Model, brand, process..."
+        <input type="text" id="searchInput" placeholder="型号、品牌、工艺..."
                onkeydown="if(event.key==='Enter')searchEntities()" />
-        <button onclick="searchEntities()">Search</button>
+        <button onclick="searchEntities()">搜索</button>
       </div>
       <div class="node-list" id="searchResults" style="margin-top:8px;"></div>
     </div>
 
     <!-- Path -->
     <div class="side-panel">
-      <h4>Path Query</h4>
+      <h4>路径查询</h4>
       <div class="path-finder">
         <select id="pathSource" onchange="updatePathTarget()">
-          <option value="">Select start...</option>
+          <option value="">选择起点...</option>
         </select>
         <select id="pathTarget">
-          <option value="">Select target...</option>
+          <option value="">选择终点...</option>
         </select>
-        <button onclick="findPath()">Shortest Path</button>
+        <button onclick="findPath()">最短路径</button>
       </div>
     </div>
 
     <!-- Compare -->
     <div class="side-panel">
-      <h4>Compare</h4>
+      <h4>对比分析</h4>
       <div style="display:flex;flex-direction:column;gap:6px;">
-        <input type="text" id="compareA" placeholder="Entity A..." />
-        <input type="text" id="compareB" placeholder="Entity B..." />
-        <button onclick="compareEntities()" class="btn-secondary">Generate Report</button>
+        <input type="text" id="compareA" placeholder="实体A..." />
+        <input type="text" id="compareB" placeholder="实体B..." />
+        <button onclick="compareEntities()" class="btn-secondary">生成报告</button>
       </div>
       <div id="compareResult" style="margin-top:6px;font-size:11px;color:var(--text-dim);max-height:186px;overflow-y:auto;line-height:1.7;"></div>
     </div>
 
     <!-- Stats -->
     <div class="side-panel">
-      <h4>Stats <button class="refresh-logs-btn" onclick="loadQuality()" style="float:right;">Quality</button></h4>
+      <h4>统计 <button class="refresh-logs-btn" onclick="loadQuality()" style="float:right;">质量</button></h4>
       <div class="stats-grid">
-        <div class="stat-cell"><div class="val" id="statNodes">-</div><div class="lbl">Nodes</div></div>
-        <div class="stat-cell"><div class="val" id="statRels">-</div><div class="lbl">Rels</div></div>
-        <div class="stat-cell"><div class="val" id="statLabels">-</div><div class="lbl">Labels</div></div>
-        <div class="stat-cell"><div class="val" id="statRelTypes">-</div><div class="lbl">Rel Types</div></div>
+        <div class="stat-cell"><div class="val" id="statNodes">-</div><div class="lbl">节点</div></div>
+        <div class="stat-cell"><div class="val" id="statRels">-</div><div class="lbl">关系</div></div>
+        <div class="stat-cell"><div class="val" id="statLabels">-</div><div class="lbl">标签</div></div>
+        <div class="stat-cell"><div class="val" id="statRelTypes">-</div><div class="lbl">关系类型</div></div>
       </div>
     </div>
 
     <!-- Node Detail -->
     <div class="side-panel">
-      <h4>Node Detail</h4>
-      <div id="nodeDetail">Click a node to inspect</div>
+      <h4>节点详情</h4>
+      <div id="nodeDetail">点击节点查看详情</div>
     </div>
 
     <!-- Ingest -->
     <div class="side-panel">
-      <h4>Data Ingest</h4>
+      <h4>数据摄入</h4>
       <div class="ingest-area">
-        <textarea id="ingestText" placeholder="Paste industrial robot text...&#10;e.g. FANUC M-10iA is a 6-axis arc welding robot, 10kg payload, 1420mm reach, 0.03mm repeatability"></textarea>
+        <textarea id="ingestText" placeholder="粘贴工业机器人文本...&#10;例如：FANUC M-10iA 是一款6轴弧焊机器人，10kg负载，1420mm臂展，0.03mm重复定位精度"></textarea>
         <div class="ingest-actions">
-          <button class="btn-primary" onclick="ingestText()">Submit</button>
-          <button class="btn-secondary" onclick="document.getElementById('ingestFile').click()">Upload File</button>
+          <button class="btn-primary" onclick="ingestText()">提交</button>
+          <button class="btn-secondary" onclick="document.getElementById('ingestFile').click()">上传文件 (可多选)</button>
         </div>
         <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:11px;color:var(--text-dim);cursor:pointer">
-          <input type="checkbox" id="ingestUseLLM" style="accent-color:var(--accent)" /> AI extraction (slower, more accurate)
+          <input type="checkbox" id="ingestUseLLM" style="accent-color:var(--accent)" /> AI提取 (更慢但更准确)
         </label>
-        <input type="file" id="ingestFile" accept=".csv,.pdf,.txt,.md,.dwg,.dxf,.step,.stp,.igs,.iges" onchange="ingestFile(this)" style="display:none" />
+        <input type="file" id="ingestFile" accept=".csv,.pdf,.txt,.md,.dwg,.dxf,.step,.stp,.igs,.iges" multiple onchange="ingestFile(this)" style="display:none" />
         <div class="ingest-status" id="ingestStatus"></div>
       </div>
     </div>
 
     <!-- Upload Log -->
     <div class="side-panel">
-      <h4>Upload Log <button class="refresh-logs-btn" onclick="loadIngestLogs()" style="float:right;">Refresh</button></h4>
-      <div class="log-list" id="logList">Click refresh to load</div>
+      <h4>上传日志 <button class="refresh-logs-btn" onclick="loadIngestLogs()" style="float:right;">刷新</button></h4>
+      <div class="log-list" id="logList">点击刷新加载</div>
     </div>
 
   </div>
@@ -132,7 +132,7 @@
       <button onclick="zoomIn()">Zoom +</button>
       <button onclick="zoomOut()">Zoom –</button>
       <button onclick="resetZoom()">Reset</button>
-      <button onclick="loadFullGraph()">Full</button>
+      <button onclick="loadFullGraph()">全景</button>
     </div>
     <div class="graph-legend" id="legend"></div>
   </div>
@@ -155,10 +155,10 @@
 <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-<script src="/js/shared.js"></script>
-<script src="/js/graph.js"></script>
-<script src="/js/chat.js"></script>
-<script src="/js/ingest.js"></script>
+<script src="/js/shared.js?v=4"></script>
+<script src="/js/graph.js?v=4"></script>
+<script src="/js/chat.js?v=4"></script>
+<script src="/js/ingest.js?v=4"></script>
 
 <script>
 /* ---- View Switching ---- */

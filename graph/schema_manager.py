@@ -72,7 +72,7 @@ class SchemaManager:
                 "CREATE VECTOR INDEX entity_embeddings IF NOT EXISTS "
                 "FOR (n:Entity) ON (n._embedding) "
                 "OPTIONS {indexConfig: {"
-                "  `vector.dimensions`: 384,"
+                "  `vector.dimensions`: 1024,"
                 "  `vector.similarity_function`: 'COSINE'"
                 "}}"
             )

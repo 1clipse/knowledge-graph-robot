@@ -110,7 +110,10 @@ def search_nodes(
     if neo4j_client is None:
         raise HTTPException(status_code=503, detail="Database not connected")
     graph_query = GraphQuery(neo4j_client)
-    return graph_query.hybrid_search(q, limit)
+    results = graph_query.hybrid_search(q, limit)
+    for item in results:
+        item.get("node", {}).pop("_embedding", None)
+    return results
 
 
 @router.get("/query/stats", response_model=StatsResponse)

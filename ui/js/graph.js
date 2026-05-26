@@ -65,12 +65,12 @@ function updateGraph(data) {
   document.getElementById('graphLoading').style.display = 'none';
 
   const rawNodes = (data.nodes || []).filter(n => {
-    const lbl = (n.labels && n.labels[0]) || 'Unknown';
+    const lbl = (n.labels && n.labels[0]) || '未知';
     return filteredTypes.size === 0 || !filteredTypes.has(lbl);
   });
 
   currentNodes = rawNodes.map(n => {
-    const id = n.id || ((n.labels && n.labels[0] || 'Unknown') + '::' + ((n.properties && n.properties.name) || ''));
+    const id = n.id || ((n.labels && n.labels[0] || '未知') + '::' + ((n.properties && n.properties.name) || ''));
     return Object.assign({}, n, { id });
   });
 
@@ -130,7 +130,7 @@ function showTooltip(event, d) {
   const container = document.getElementById('graph-view');
   const rect = container.getBoundingClientRect();
   const props = d.properties || {};
-  const label = (d.labels && d.labels[0]) || 'Unknown';
+  const label = (d.labels && d.labels[0]) || '未知';
   const labelZh = LABEL_ZH[label] || label;
   const color = LABEL_COLORS[label] || '#94A3B8';
   let html = `<strong style="color:${color}">${labelZh} / ${label}</strong><br>`;
@@ -156,33 +156,33 @@ function hideTooltip() { document.getElementById('tooltip').style.display = 'non
 function showNodeDetail(d) {
   const detail = document.getElementById('nodeDetail');
   const props = d.properties || {};
-  const label = (d.labels && d.labels[0]) || 'Unknown';
+  const label = (d.labels && d.labels[0]) || '未知';
   const labelZh = LABEL_ZH[label] || label;
   const color = LABEL_COLORS[label] || '#94A3B8';
   const nameVal = props.name || d.id || '';
   let html = `<div class="detail-name"><span class="detail-label" style="background:${color}">${labelZh}</span> ${escapeHtml(nameVal)}</div>`;
-  html += `<button onclick="deleteNode('${label}','${nameVal.replace(/'/g, "\\'")}');event.stopPropagation()" style="margin-bottom:6px;padding:3px 10px;border-radius:2px;border:1px solid var(--err);background:transparent;color:var(--err);cursor:pointer;font-size:10px;font-family:var(--font-mono)">Delete</button>`;
+  html += `<button onclick="deleteNode('${label}','${nameVal.replace(/'/g, "\\'")}');event.stopPropagation()" style="margin-bottom:6px;padding:3px 10px;border-radius:2px;border:1px solid var(--err);background:transparent;color:var(--err);cursor:pointer;font-size:10px;font-family:var(--font-mono)">删除</button>`;
   Object.keys(props).forEach(k => {
     if (props[k] != null && props[k] !== '') {
       html += `<div class="detail-row"><span>${k}:</span> ${escapeHtml(String(props[k]))}</div>`;
     }
   });
-  if (!Object.keys(props).length) html += '<div class="detail-row" style="color:var(--text-dim)">No properties</div>';
+  if (!Object.keys(props).length) html += '<div class="detail-row" style="color:var(--text-dim)">无属性</div>';
 
   // Fetch neighbors
   fetch(`${API_BASE}/query/neighbors/${label}/${encodeURIComponent(nameVal)}?limit=20`)
     .then(r => r.json()).then(data => {
       if (data && data.length > 0) {
-        html += '<div class="neighbor-section"><strong style="color:var(--accent);font-size:11px">Related:</strong>';
+        html += '<div class="neighbor-section"><strong style="color:var(--accent);font-size:11px">关联节点:</strong>';
         data.forEach(n => {
           html += `<div class="detail-row" style="margin-left:6px">&rarr; <span style="color:var(--accent-dim)">${n.relation_type || ''}</span>: ${n.node && n.node.name || '?'}</div>`;
         });
         html += '</div>';
       }
       // Confidence & source
-      if (props._confidence !== undefined) html += `<div class="detail-row"><span>Confidence:</span> ${(props._confidence * 100).toFixed(0)}%</div>`;
-      if (props._source) html += `<div class="detail-row"><span>Source:</span> ${escapeHtml(props._source)}</div>`;
-      if (props.valid_from || props.valid_to) html += `<div class="detail-row"><span>Period:</span> ${props.valid_from || '?'} ~ ${props.valid_to || 'present'}</div>`;
+      if (props._confidence !== undefined) html += `<div class="detail-row"><span>置信度:</span> ${(props._confidence * 100).toFixed(0)}%</div>`;
+      if (props._source) html += `<div class="detail-row"><span>来源:</span> ${escapeHtml(props._source)}</div>`;
+      if (props.valid_from || props.valid_to) html += `<div class="detail-row"><span>时段:</span> ${props.valid_from || '?'} ~ ${props.valid_to || '至今'}</div>`;
       detail.innerHTML = html;
     }).catch(() => { detail.innerHTML = html; });
 }
@@ -200,10 +200,10 @@ async function searchEntities() {
     resultsDiv.innerHTML = '';
     const nodes = data.nodes || [];
     if (nodes.length === 0) {
-      resultsDiv.innerHTML = '<div style="font-size:12px;color:var(--text-dim);padding:6px">No matches</div>';
+      resultsDiv.innerHTML = '<div style="font-size:12px;color:var(--text-dim);padding:6px">无匹配结果</div>';
     } else {
       nodes.slice(0, 25).forEach(n => {
-        const label = (n.labels && n.labels[0]) || 'Unknown';
+        const label = (n.labels && n.labels[0]) || '未知';
         const labelZh = LABEL_ZH[label] || label;
         const color = LABEL_COLORS[label] || '#94A3B8';
         const item = document.createElement('div');
@@ -223,13 +223,16 @@ async function loadFullGraph() {
   filteredTypes = new Set();
   buildLegend();
   const keywords = ['Component', 'Robot', 'Manufacturer', 'FANUC', 'ABB', 'CHX'];
-  let data = null;
+  let best = null;
   for (const kw of keywords) {
     const resp = await fetch(`${API_BASE}/subgraph/search/${encodeURIComponent(kw)}?depth=3&limit=300`);
-    data = await resp.json();
-    if (data.nodes && data.nodes.length > 0) break;
+    const data = await resp.json();
+    if (!data.nodes || data.nodes.length === 0) continue;
+    if (!best || (data.edges ? data.edges.length : 0) > (best.edges ? best.edges.length : 0)) {
+      best = data;
+    }
   }
-  if (data && data.nodes && data.nodes.length > 0) updateGraph(data);
+  if (best && best.nodes && best.nodes.length > 0) updateGraph(best);
   document.getElementById('graphLoading').style.display = 'none';
 }
 
@@ -268,8 +271,8 @@ async function findPath() {
   const tgtSel = document.getElementById('pathTarget');
   const srcName = srcSel.value;
   const tgtName = tgtSel.value;
-  if (!srcName || !tgtName) { alert('Select start and target entities'); return; }
-  if (srcName === tgtName) { alert('Start and target must differ'); return; }
+  if (!srcName || !tgtName) { alert('请选择起点和终点实体'); return; }
+  if (srcName === tgtName) { alert('起点和终点不能相同'); return; }
 
   const srcLabel = srcSel.selectedOptions[0] ? srcSel.selectedOptions[0].getAttribute('data-label') || '' : '';
   const tgtLabel = tgtSel.selectedOptions[0] ? tgtSel.selectedOptions[0].getAttribute('data-label') || '' : '';
@@ -279,18 +282,18 @@ async function findPath() {
     const url = `${API_BASE}/query/shortest-path?source_label=${encodeURIComponent(srcLabel)}&source_name=${encodeURIComponent(srcName)}&target_label=${encodeURIComponent(tgtLabel)}&target_name=${encodeURIComponent(tgtName)}&max_depth=5`;
     const resp = await fetch(url);
     const data = await resp.json();
-    if (!data || data.length === 0) { alert('No path found'); document.getElementById('graphLoading').style.display = 'none'; return; }
+    if (!data || data.length === 0) { alert('未找到路径'); document.getElementById('graphLoading').style.display = 'none'; return; }
     const path = data[0];
     const nodes = (path.nodes || []).map((n, i) => ({
       id: (n.labels && n.labels[0] || 'Node') + '::' + ((n.properties && n.properties.name) || 'node_' + i),
-      labels: n.labels || ['Unknown'],
+      labels: n.labels || ['未知'],
       properties: n.properties || {}
     }));
     const nameToLabel = {};
-    nodes.forEach(n => { const nm = (n.properties && n.properties.name) || ''; nameToLabel[nm] = n.labels && n.labels[0] || 'Unknown'; });
+    nodes.forEach(n => { const nm = (n.properties && n.properties.name) || ''; nameToLabel[nm] = n.labels && n.labels[0] || '未知'; });
     const edges = (path.edges || []).map(e => ({
-      source: (nameToLabel[e.start] || 'Unknown') + '::' + (e.start || ''),
-      target: (nameToLabel[e.end] || 'Unknown') + '::' + (e.end || ''),
+      source: (nameToLabel[e.start] || '未知') + '::' + (e.start || ''),
+      target: (nameToLabel[e.end] || '未知') + '::' + (e.end || ''),
       type: e.type || 'RELATED'
     }));
     updateGraph({ nodes, edges });
@@ -326,22 +329,22 @@ async function loadQuality() {
   try {
     const resp = await fetch(`${API_BASE}/quality`);
     const data = await resp.json();
-    let html = `<div style="padding:6px"><strong style="font-family:var(--font-mono);font-size:12px">Quality: ${data.quality_score || 0}/100</strong><br>`;
-    html += `Orphan nodes: ${data.orphan_nodes ? data.orphan_nodes.length : 0}<br>`;
-    html += `Missing props: ${data.missing_key_props ? data.missing_key_props.length : 0}<br>`;
-    html += `Potential dupes: ${data.potential_duplicates ? data.potential_duplicates.length : 0}<br>`;
-    html += `Low confidence: ${data.low_confidence_facts ? data.low_confidence_facts.length : 0}</div>`;
+    let html = `<div style="padding:6px"><strong style="font-family:var(--font-mono);font-size:12px">质量: ${data.quality_score || 0}/100</strong><br>`;
+    html += `孤立节点: ${data.orphan_nodes ? data.orphan_nodes.length : 0}<br>`;
+    html += `缺失属性: ${data.missing_key_props ? data.missing_key_props.length : 0}<br>`;
+    html += `潜在重复: ${data.potential_duplicates ? data.potential_duplicates.length : 0}<br>`;
+    html += `低置信度: ${data.low_confidence_facts ? data.low_confidence_facts.length : 0}</div>`;
     document.getElementById('nodeDetail').innerHTML = html;
-  } catch (e) { alert('Quality report failed: ' + e.message); }
+  } catch (e) { alert('质量报告失败: ' + e.message); }
 }
 
 // ---- Compare ----
 async function compareEntities() {
   const a = document.getElementById('compareA').value.trim();
   const b = document.getElementById('compareB').value.trim();
-  if (!a || !b) { alert('Enter two entity names'); return; }
+  if (!a || !b) { alert('请输入两个实体名称'); return; }
   const el = document.getElementById('compareResult');
-  el.innerHTML = 'Generating...';
+  el.innerHTML = '生成中...';
   try {
     const resp = await fetch(`${API_BASE}/compare`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -351,7 +354,7 @@ async function compareEntities() {
     if (data.status === 'success') {
       el.innerHTML = `<div style="white-space:pre-wrap;font-size:12px;line-height:1.8;font-family:var(--font-mono)">${simpleMd(data.comparison || 'No result')}</div>`;
     } else {
-      el.innerHTML = '<div style="color:var(--err)">Compare failed</div>';
+      el.innerHTML = '<div style="color:var(--err)">对比失败</div>';
     }
-  } catch (e) { el.innerHTML = `<div style="color:var(--err)">Request failed: ${e.message}</div>`; }
+  } catch (e) { el.innerHTML = `<div style="color:var(--err)">请求失败: ${e.message}</div>`; }
 }

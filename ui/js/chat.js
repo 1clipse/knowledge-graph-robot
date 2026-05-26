@@ -16,14 +16,14 @@ function showChatEmpty() {
   el.innerHTML = `
     <div class="chat-empty">
       <div class="ce-icon">&Sigma;</div>
-      <h2>Industrial Robot Knowledge Q&A</h2>
-      <p>Retrieval-augmented answers from structured knowledge</p>
+      <h2>工业机器人知识问答</h2>
+      <p>基于结构化知识的检索增强回答</p>
       <div class="ce-examples">
-        <button onclick="chatExample(this)">FANUC M-20iA load capacity and precision?</button>
-        <button onclick="chatExample(this)">ABB welding robot models?</button>
-        <button onclick="chatExample(this)">KUKA robot control systems?</button>
-        <button onclick="chatExample(this)">Compare FANUC vs ABB 6-axis robots</button>
-        <button onclick="chatExample(this)">RV reducer vs harmonic reducer?</button>
+        <button onclick="chatExample(this)">FANUC M-20iA 负载与精度？</button>
+        <button onclick="chatExample(this)">ABB 焊接机器人型号？</button>
+        <button onclick="chatExample(this)">KUKA 机器人控制系统？</button>
+        <button onclick="chatExample(this)">对比 FANUC 与 ABB 六轴机器人</button>
+        <button onclick="chatExample(this)">RV减速器 vs 谐波减速器？</button>
       </div>
     </div>`;
 }
@@ -40,7 +40,7 @@ function chatAddMsg(role, content) {
   row.className = 'msg-row ' + role;
   const label = document.createElement('div');
   label.className = 'msg-label';
-  label.textContent = role === 'user' ? 'ASK' : 'ASSISTANT';
+  label.textContent = role === 'user' ? '提问' : '助手';
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble';
   bubble.innerHTML = content;
@@ -55,7 +55,7 @@ function chatAddContextCard(contextText) {
   const es = el.querySelector('.chat-empty'); if (es) es.remove();
   const card = document.createElement('div');
   card.className = 'context-card';
-  card.innerHTML = '<div class="ctx-label">Retrieved Knowledge</div><pre>' + escapeHtml(contextText) + '</pre>';
+  card.innerHTML = '<div class="ctx-label">检索到的知识</div><pre>' + escapeHtml(contextText) + '</pre>';
   el.appendChild(card);
   return card;
 }
@@ -78,7 +78,7 @@ async function chatSend() {
   const row = document.createElement('div');
   row.className = 'msg-row assistant';
   const label = document.createElement('div');
-  label.className = 'msg-label'; label.textContent = 'ASSISTANT';
+  label.className = 'msg-label'; label.textContent = '助手';
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble';
   row.appendChild(label);
@@ -128,20 +128,20 @@ async function chatSend() {
           } else if (data.type === 'done') {
             if (cursor.parentNode) cursor.remove();
           } else if (data.type === 'error') {
-            bubble.innerHTML = '<p style="color:var(--err)">Error: ' + escapeHtml(data.message) + '</p>';
+            bubble.innerHTML = '<p style="color:var(--err)">错误: ' + escapeHtml(data.message) + '</p>';
           }
         } catch (e) {}
       }
     }
   } catch (e) {
-    bubble.innerHTML = '<p style="color:var(--err)">Request failed: ' + escapeHtml(e.message) + '</p>';
+    bubble.innerHTML = '<p style="color:var(--err)">请求失败: ' + escapeHtml(e.message) + '</p>';
   }
 
   if (cursor.parentNode) cursor.remove();
   if (fullText) {
     bubble.innerHTML = '<p>' + simpleMd(escapeHtml(fullText)) + '</p>';
   } else if (!bubble.innerHTML.includes('Request failed') && !bubble.innerHTML.includes('Error:')) {
-    bubble.innerHTML = '<p style="color:var(--text-dim)">No response — check backend</p>';
+    bubble.innerHTML = '<p style="color:var(--text-dim)">无响应 — 检查后端</p>';
   }
 
   isStreaming = false;

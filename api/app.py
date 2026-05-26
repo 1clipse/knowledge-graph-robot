@@ -8,9 +8,11 @@ from typing import AsyncGenerator
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from loguru import logger
 
-from api.routes import ingest, query, ask, subgraph, quality
+from api.routes import ingest, query, ask, subgraph, quality, eval
 from config.settings import get_config
 from graph.client import Neo4jClient
 from graph.schema_manager import SchemaManager
@@ -38,6 +40,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting Industrial Robot Knowledge Graph API...")
     if not _API_KEY:
         logger.warning("KG_API_KEY not set — API has no authentication")
+
+    # BGE-M3 model path (read from .env, fall back to default)
+    _os.environ.setdefault("EMBEDDING_MODEL_PATH", "E:/huggingface_cache/BAAI/bge-m3")
+    _os.environ.setdefault("HF_HOME", "E:/huggingface_cache")
+    _os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
     # Preload embedding model in background to avoid blocking first request
     from graph.embeddings import init_model
@@ -87,7 +94,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.middleware("http")
 async def api_key_middleware(request: Request, call_next):
     if not _API_KEY:
@@ -118,11 +124,31 @@ def chat_page():
     return (_UI_DIR / "index.html").read_text(encoding="utf-8")
 
 
+# Static file serving — /css/* and /js/*
+@app.get("/css/{filename:path}")
+async def serve_css(filename: str):
+    file_path = _UI_DIR / "css" / filename
+    if not file_path.resolve().is_relative_to(_UI_DIR.resolve()):
+        raise HTTPException(status_code=404)
+    if not file_path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(str(file_path))
+
+@app.get("/js/{filename:path}")
+async def serve_js(filename: str):
+    file_path = _UI_DIR / "js" / filename
+    if not file_path.resolve().is_relative_to(_UI_DIR.resolve()):
+        raise HTTPException(status_code=404)
+    if not file_path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(str(file_path))
+
 app.include_router(ingest.router, prefix="/api/v1", tags=["数据摄入"])
 app.include_router(query.router, prefix="/api/v1", tags=["图查询"])
 app.include_router(ask.router, prefix="/api/v1", tags=["知识问答"])
 app.include_router(subgraph.router, prefix="/api/v1", tags=["可视化"])
 app.include_router(quality.router, prefix="/api/v1", tags=["数据质量"])
+app.include_router(eval.router, prefix="/api/v1", tags=["质量评估"])
 
 
 @app.get("/health")
