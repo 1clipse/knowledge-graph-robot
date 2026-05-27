@@ -126,6 +126,16 @@ class GraphQuery:
                 return l
         return ""
 
+    def _node_key(self, node: Any) -> str:
+        return f"{self._primary_label(node.labels)}::{node['name']}"
+
+    def _add_graph_node(self, nodes: Dict[str, Dict[str, Any]], node: Any) -> None:
+        if "name" not in node:
+            return
+        key = self._node_key(node)
+        if key not in nodes:
+            nodes[key] = {"id": key, "labels": self._display_labels(node.labels), "properties": dict(node)}
+
     def subgraph(
         self,
         label: str,
@@ -144,15 +154,12 @@ class GraphQuery:
         edges: List[Dict[str, Any]] = []
 
         for record in records:
-            n = record.get("n", {})
-            m = record.get("m", {})
-            n_key = f"{self._primary_label(n.labels)}::{n['name']}" if hasattr(n, "labels") else str(id(n))
-            m_key = f"{self._primary_label(m.labels)}::{m['name']}" if hasattr(m, "labels") else str(id(m))
-
-            if n_key not in nodes:
-                nodes[n_key] = {"id": n_key, "labels": self._display_labels(n.labels), "properties": dict(n)}
-            if m_key not in nodes:
-                nodes[m_key] = {"id": m_key, "labels": self._display_labels(m.labels), "properties": dict(m)}
+            n = record.get("n")
+            m = record.get("m")
+            if hasattr(n, "labels"):
+                self._add_graph_node(nodes, n)
+            if hasattr(m, "labels"):
+                self._add_graph_node(nodes, m)
 
             rels = record.get("r", [])
             if not isinstance(rels, list):
@@ -160,16 +167,56 @@ class GraphQuery:
             for rel in rels:
                 start_node = rel.start_node
                 end_node = rel.end_node
-                start_key = f"{self._primary_label(start_node.labels)}::{start_node['name']}" if hasattr(start_node, "labels") else str(id(start_node))
-                end_key = f"{self._primary_label(end_node.labels)}::{end_node['name']}" if hasattr(end_node, "labels") else str(id(end_node))
+                if "name" not in start_node or "name" not in end_node:
+                    continue
+                self._add_graph_node(nodes, start_node)
+                self._add_graph_node(nodes, end_node)
                 edges.append(
                     {
-                        "source": start_key,
-                        "target": end_key,
+                        "source": self._node_key(start_node),
+                        "target": self._node_key(end_node),
                         "type": rel.type,
                         "properties": dict(rel),
                     }
                 )
+
+        return {"nodes": list(nodes.values()), "edges": edges}
+
+    def full_graph(self, limit: int = 1000) -> Dict[str, Any]:
+        nodes: Dict[str, Dict[str, Any]] = {}
+        edges: List[Dict[str, Any]] = []
+
+        node_records = self._client.execute_query(
+            "MATCH (n) WHERE n.name IS NOT NULL RETURN n LIMIT $limit",
+            {"limit": limit},
+        )
+        for record in node_records:
+            node = record.get("n")
+            if hasattr(node, "labels"):
+                self._add_graph_node(nodes, node)
+
+        rel_records = self._client.execute_query(
+            "MATCH (a)-[r]->(b) "
+            "WHERE a.name IS NOT NULL AND b.name IS NOT NULL "
+            "RETURN a, r, b LIMIT $limit",
+            {"limit": limit},
+        )
+        for record in rel_records:
+            a = record.get("a")
+            b = record.get("b")
+            rel = record.get("r")
+            if not (hasattr(a, "labels") and hasattr(b, "labels") and rel is not None):
+                continue
+            self._add_graph_node(nodes, a)
+            self._add_graph_node(nodes, b)
+            edges.append(
+                {
+                    "source": self._node_key(a),
+                    "target": self._node_key(b),
+                    "type": rel.type,
+                    "properties": dict(rel),
+                }
+            )
 
         return {"nodes": list(nodes.values()), "edges": edges}
 

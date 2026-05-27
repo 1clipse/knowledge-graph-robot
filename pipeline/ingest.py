@@ -12,6 +12,7 @@ from extractors.rule_extractor import RuleExtractor
 from extractors.structured_mapper import StructuredMapper
 from graph.client import Neo4jClient
 from graph.schema_manager import SchemaManager
+from graph.writer import GraphWriter
 from loaders.csv_loader import CSVLoader
 from loaders.db_loader import DBLoader
 from loaders.pdf_loader import PDFLoader
@@ -37,88 +38,8 @@ class IngestPipeline:
     def _write_result(self, result: ExtractionResult) -> None:
         if not result.entities:
             return
-
-        from graph.client import _validate_identifier
-
-        # Batch embed
-        embed_texts: list[str] = []
-        valid_entities: list = []
-        for entity in result.entities:
-            if self._schema_manager and not self._schema_manager.validate_entity_type(entity.type):
-                logger.warning(f"Skipping invalid entity type: {entity.type}")
-                continue
-            embed_texts.append(
-                f"{entity.type} {entity.name} {entity.properties.get('description', '')}"
-            )
-            valid_entities.append(entity)
-
-        embeddings_map: dict[int, list] = {}
-        if embed_texts:
-            try:
-                from graph.embeddings import embed_texts as batch_embed
-                emb_list = batch_embed(embed_texts)
-                for i, emb in enumerate(emb_list):
-                    embeddings_map[i] = emb
-            except Exception as e:
-                logger.warning(f"Batch embedding failed: {e}")
-
-        # Batch write entities
-        entity_queries: list[tuple[str, dict]] = []
-        for i, entity in enumerate(valid_entities):
-            props = {k: v for k, v in entity.properties.items() if v is not None}
-            props["name"] = entity.name
-            if entity.source:
-                props["_source"] = entity.source
-            props["_confidence"] = entity.confidence
-            if entity.valid_from:
-                props["valid_from"] = entity.valid_from
-            if entity.valid_to:
-                props["valid_to"] = entity.valid_to
-            if i in embeddings_map:
-                props["_embedding"] = embeddings_map[i]
-
-            _validate_identifier(entity.type, "entity_type")
-            prop_assignments = ", ".join(f"n.{k} = ${k}" for k in props.keys())
-            query = f"MERGE (n:`{entity.type}` {{name: $name}}) SET {prop_assignments}"
-            entity_queries.append((query, props))
-
-        relation_queries: list[tuple[str, dict]] = []
-        for rel in result.relations:
-            if self._schema_manager and not self._schema_manager.validate_relation_type(rel.relation_type):
-                logger.warning(f"Skipping invalid relation type: {rel.relation_type}")
-                continue
-            rel_props = {k: v for k, v in rel.properties.items() if v is not None}
-            if rel.source_ref:
-                rel_props["_source"] = rel.source_ref
-            rel_props["_confidence"] = rel.confidence
-            if rel.valid_from:
-                rel_props["valid_from"] = rel.valid_from
-            if rel.valid_to:
-                rel_props["valid_to"] = rel.valid_to
-
-            _validate_identifier(rel.source.type, "source_type")
-            _validate_identifier(rel.target.type, "target_type")
-            _validate_identifier(rel.relation_type, "relation_type")
-            params: dict = {
-                "source_name": rel.source.name,
-                "target_name": rel.target.name,
-            }
-            set_clause = ""
-            if rel_props:
-                set_clause = " SET " + ", ".join(f"r.{k} = ${k}" for k in rel_props.keys())
-                params.update(rel_props)
-            query = (
-                f"MATCH (s:`{rel.source.type}` {{name: $source_name}}) "
-                f"MATCH (t:`{rel.target.type}` {{name: $target_name}}) "
-                f"MERGE (s)-[r:`{rel.relation_type}`]->(t)"
-                f"{set_clause}"
-            )
-            relation_queries.append((query, params))
-
-        if entity_queries:
-            self._client.execute_write_batch(entity_queries)
-        if relation_queries:
-            self._client.execute_write_batch(relation_queries)
+        writer = GraphWriter(self._client, self._schema_manager)
+        writer.write(result)
 
     async def ingest_text(self, text: str, use_llm: bool = True) -> ExtractionResult:
         result = ExtractionResult()

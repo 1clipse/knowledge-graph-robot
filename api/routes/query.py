@@ -7,6 +7,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from api.deps import neo4j_client
+from api.security import audit_log, validate_read_only_cypher
 from graph.client import _validate_identifier
 from graph.query import GraphQuery
 
@@ -36,6 +37,17 @@ class StatsResponse(BaseModel):
 def execute_query(request: QueryRequest) -> QueryResponse:
     if neo4j_client is None:
         raise HTTPException(status_code=503, detail="Database not connected")
+
+    # Block write operations in arbitrary Cypher
+    error = validate_read_only_cypher(request.cypher)
+    if error:
+        audit_log(
+            action="cypher_blocked",
+            method="POST",
+            path="/api/v1/query",
+            details=f"blocked_reason={error} cypher_preview={request.cypher[:120]}",
+        )
+        raise HTTPException(status_code=403, detail=error)
 
     try:
         records = neo4j_client.execute_read(request.cypher, request.parameters)

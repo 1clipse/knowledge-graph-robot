@@ -208,3 +208,13 @@ class STEPLoader:
                 parts.append(f"  子件: {ref.get('name', '')} (ID: {ref.get('id', '')})")
 
         return "\n".join(parts)
+
+    def to_graph_data(self, file_path: str) -> "CADGraphData":
+        """Convert STEP metadata to ontology-aligned graph entities.
+
+        Uses CADAdapter to map products→Part, assembly refs→Assembly,
+        measures→Dimension, and materials→Material.
+        """
+        from loaders.cad_adapter import CADAdapter
+        meta = self.load_metadata(file_path)
+        return CADAdapter().from_step_metadata(meta, file_path)

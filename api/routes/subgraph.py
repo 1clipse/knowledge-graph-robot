@@ -29,6 +29,25 @@ def _primary_label(labels: List[str]) -> str:
     return labels[0] if labels else ""
 
 
+@router.get("/subgraph", response_model=Dict[str, Any])
+def get_full_graph(
+    limit: int = Query(default=1000, le=5000),
+) -> Dict[str, Any]:
+    if neo4j_client is None:
+        raise HTTPException(status_code=503, detail="Database not connected")
+
+    graph_query = GraphQuery(neo4j_client)
+    try:
+        result = graph_query.full_graph(limit)
+        for n in result.get("nodes", []):
+            n["labels"] = [l for l in n.get("labels", []) if l != "Entity"]
+        result["nodes"] = [_strip_internal(n) for n in result.get("nodes", [])]
+        return result
+    except Exception as e:
+        logger.error(f"Full graph extraction failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/subgraph/search/{keyword}", response_model=Dict[str, Any])
 def search_subgraph(
     keyword: str,

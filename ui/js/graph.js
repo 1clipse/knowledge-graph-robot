@@ -17,10 +17,31 @@ const LABEL_ZH = {
   Software: '软件系统', IngestLog: '摄入日志'
 };
 
-let simulation, svg, g, linkGroup, nodeGroup, zoomBehavior;
+let simulation, svg, g, linkGroup, linkLabelGroup, nodeGroup, zoomBehavior, defs;
 let currentNodes = [], currentLinks = [], filteredTypes = new Set();
 let allEntitiesCache = [];
 let _graphInit = false;
+let _lastCompareData = null;  // stores full CompareResponse for export
+
+// 关系类型 → 中文显示名
+const REL_ZH = {
+  MANUFACTURED_BY: '制造商',
+  HAS_COMPONENT: '包含部件',
+  USES_REDUCER: '使用减速器',
+  USES_SERVO: '使用伺服',
+  USES_CONTROLLER: '使用控制器',
+  USES_SENSOR: '使用传感器',
+  USES_END_EFFECTOR: '末端执行器',
+  APPLIED_IN: '应用于',
+  PERFORMS_PROCESS: '执行工艺',
+  COMPLIES_WITH: '符合标准',
+  PROCESSES_MATERIAL: '加工材料',
+  RUNS_SOFTWARE: '运行软件',
+  RELATED: '关联',
+  DERIVED_FROM: '来源于'
+};
+
+function relLabel(t) { return REL_ZH[t] || t || ''; }
 
 function initGraph() {
   const container = document.getElementById('graph-container');
@@ -28,15 +49,27 @@ function initGraph() {
   const h = container.clientHeight;
 
   svg = d3.select('#graph-container').append('svg').attr('width', w).attr('height', h);
+  defs = svg.append('defs');
+  // 箭头标记
+  defs.append('marker')
+    .attr('id', 'arrow').attr('viewBox', '0 -5 10 10')
+    .attr('refX', 26).attr('refY', 0)
+    .attr('markerWidth', 7).attr('markerHeight', 7)
+    .attr('orient', 'auto')
+    .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', '#94A3B8');
+
   g = svg.append('g');
   linkGroup = g.append('g').attr('class', 'links');
+  linkLabelGroup = g.append('g').attr('class', 'link-labels');
   nodeGroup = g.append('g').attr('class', 'nodes');
 
   simulation = d3.forceSimulation()
-    .force('link', d3.forceLink().id(d => d.id).distance(120))
-    .force('charge', d3.forceManyBody().strength(-400))
+    .force('link', d3.forceLink().id(d => d.id).distance(180).strength(0.6))
+    .force('charge', d3.forceManyBody().strength(-900).distanceMax(800))
     .force('center', d3.forceCenter(w / 2, h / 2))
-    .force('collision', d3.forceCollide().radius(38));
+    .force('collision', d3.forceCollide().radius(50))
+    .force('x', d3.forceX(w / 2).strength(0.04))
+    .force('y', d3.forceY(h / 2).strength(0.04));
 
   zoomBehavior = d3.zoom().scaleExtent([0.08, 5]).on('zoom', (event) => {
     g.attr('transform', event.transform);
@@ -47,6 +80,14 @@ function initGraph() {
     linkGroup.selectAll('line')
       .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
       .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    linkLabelGroup.selectAll('g.link-label')
+      .attr('transform', d => {
+        const x = (d.source.x + d.target.x) / 2;
+        const y = (d.source.y + d.target.y) / 2;
+        let ang = Math.atan2(d.target.y - d.source.y, d.target.x - d.source.x) * 180 / Math.PI;
+        if (ang > 90) ang -= 180; else if (ang < -90) ang += 180;
+        return `translate(${x},${y}) rotate(${ang})`;
+      });
     nodeGroup.selectAll('g.node').attr('transform', d => `translate(${d.x},${d.y})`);
   });
 
@@ -78,11 +119,46 @@ function updateGraph(data) {
   currentLinks = (data.edges || []).filter(e => nodeIds.has(e.source) && nodeIds.has(e.target))
     .map(e => ({ source: e.source, target: e.target, type: e.type || 'RELATED' }));
 
+  // 计算度数 → 节点大小
+  const deg = {};
+  currentLinks.forEach(l => {
+    const s = typeof l.source === 'object' ? l.source.id : l.source;
+    const t = typeof l.target === 'object' ? l.target.id : l.target;
+    deg[s] = (deg[s] || 0) + 1;
+    deg[t] = (deg[t] || 0) + 1;
+  });
+  const radiusOf = d => Math.max(14, Math.min(34, 14 + Math.sqrt(deg[d.id] || 0) * 4));
+
   // Links
-  linkGroup.selectAll('line')
-    .data(currentLinks, d => d.source + '-' + (d.type || '') + '-' + d.target)
-    .join('line')
-    .attr('stroke', '#CBD5E1').attr('stroke-width', 1.5).attr('stroke-opacity', 0.65);
+  const links = linkGroup.selectAll('line')
+    .data(currentLinks, d => d.source + '-' + (d.type || '') + '-' + d.target);
+  links.exit().remove();
+  links.enter().append('line')
+    .attr('stroke', '#94A3B8').attr('stroke-width', 1.2).attr('stroke-opacity', 0.55)
+    .attr('marker-end', 'url(#arrow)');
+
+  // Link labels (关系名贴在线条中点)
+  const linkLabels = linkLabelGroup.selectAll('g.link-label')
+    .data(currentLinks, d => d.source + '-' + (d.type || '') + '-' + d.target);
+  linkLabels.exit().remove();
+  const linkLabelsEnter = linkLabels.enter().append('g').attr('class', 'link-label');
+  linkLabelsEnter.append('rect')
+    .attr('fill', '#FFFFFF').attr('fill-opacity', 0.92)
+    .attr('rx', 2).attr('ry', 2);
+  linkLabelsEnter.append('text')
+    .attr('text-anchor', 'middle').attr('dy', 3)
+    .attr('font-size', 10).attr('font-family', 'Fira Code, monospace')
+    .attr('fill', '#475569')
+    .text(d => relLabel(d.type));
+  // 给每个 label 的 rect 设置基于文本的尺寸
+  linkLabelGroup.selectAll('g.link-label').each(function() {
+    const t = d3.select(this).select('text').node();
+    if (!t) return;
+    const bb = t.getBBox();
+    d3.select(this).select('rect')
+      .attr('x', bb.x - 3).attr('y', bb.y - 1)
+      .attr('width', bb.width + 6).attr('height', bb.height + 2);
+  });
 
   // Nodes
   const nodes = nodeGroup.selectAll('g.node').data(currentNodes, d => d.id);
@@ -96,27 +172,49 @@ function updateGraph(data) {
     );
 
   nodesEnter.append('circle')
-    .attr('r', 18)
+    .attr('r', radiusOf)
     .attr('fill', d => LABEL_COLORS[d.labels && d.labels[0]] || '#94A3B8')
-    .attr('stroke', '#FFFFFF').attr('stroke-width', 2)
+    .attr('stroke', '#FFFFFF').attr('stroke-width', 2.5)
     .on('mouseover', showTooltip)
     .on('mouseout', hideTooltip)
     .on('click', (event, d) => showNodeDetail(d));
 
-  nodesEnter.append('text')
-    .attr('dy', 30).attr('text-anchor', 'middle')
-    .attr('fill', d => LABEL_COLORS[d.labels && d.labels[0]] || '#64748B')
+  // 节点标签：白底胶囊，在节点正下方
+  const labelG = nodesEnter.append('g').attr('class', 'node-label').attr('pointer-events', 'none');
+  labelG.append('rect')
+    .attr('fill', '#FFFFFF').attr('fill-opacity', 0.95)
+    .attr('stroke', '#E2E8F0').attr('stroke-width', 1)
+    .attr('rx', 3).attr('ry', 3);
+  labelG.append('text')
+    .attr('text-anchor', 'middle')
     .attr('font-size', 11).attr('font-weight', 500)
-    .attr('font-family', 'Fira Code, monospace')
+    .attr('font-family', 'Fira Sans, Microsoft YaHei, sans-serif')
+    .attr('fill', '#0F172A')
     .text(d => {
       const name = (d.properties && d.properties.name) || d.id || '';
-      return name.length > 14 ? name.substring(0, 13) + '…' : name;
+      return name.length > 12 ? name.substring(0, 11) + '…' : name;
     });
 
-  nodes.select('circle').attr('fill', d => LABEL_COLORS[d.labels && d.labels[0]] || '#94A3B8');
-  nodes.select('text').text(d => {
+  nodes.select('circle')
+    .attr('r', radiusOf)
+    .attr('fill', d => LABEL_COLORS[d.labels && d.labels[0]] || '#94A3B8');
+  nodes.select('g.node-label text').text(d => {
     const name = (d.properties && d.properties.name) || d.id || '';
-    return name.length > 14 ? name.substring(0, 13) + '…' : name;
+    return name.length > 12 ? name.substring(0, 11) + '…' : name;
+  });
+
+  // 重新计算节点 label 胶囊尺寸 + 偏移（圆下方）
+  nodeGroup.selectAll('g.node').each(function(d) {
+    const sel = d3.select(this);
+    const t = sel.select('g.node-label text').node();
+    if (!t) return;
+    const bb = t.getBBox();
+    const r = radiusOf(d);
+    const dy = r + 12;
+    sel.select('g.node-label text').attr('y', dy);
+    sel.select('g.node-label rect')
+      .attr('x', bb.x - 4).attr('y', dy + bb.y - 1)
+      .attr('width', bb.width + 8).attr('height', bb.height + 2);
   });
 
   simulation.nodes(currentNodes);
@@ -222,17 +320,13 @@ async function loadFullGraph() {
   document.getElementById('graphLoading').style.display = 'flex';
   filteredTypes = new Set();
   buildLegend();
-  const keywords = ['Component', 'Robot', 'Manufacturer', 'FANUC', 'ABB', 'CHX'];
-  let best = null;
-  for (const kw of keywords) {
-    const resp = await fetch(`${API_BASE}/subgraph/search/${encodeURIComponent(kw)}?depth=3&limit=300`);
+  try {
+    const resp = await fetch(`${API_BASE}/subgraph?limit=5000`);
     const data = await resp.json();
-    if (!data.nodes || data.nodes.length === 0) continue;
-    if (!best || (data.edges ? data.edges.length : 0) > (best.edges ? best.edges.length : 0)) {
-      best = data;
-    }
+    updateGraph(data);
+  } catch (e) {
+    console.error('Full graph load failed:', e);
   }
-  if (best && best.nodes && best.nodes.length > 0) updateGraph(best);
   document.getElementById('graphLoading').style.display = 'none';
 }
 
@@ -352,9 +446,104 @@ async function compareEntities() {
     });
     const data = await resp.json();
     if (data.status === 'success') {
+      _lastCompareData = data;
       el.innerHTML = `<div style="white-space:pre-wrap;font-size:12px;line-height:1.8;font-family:var(--font-mono)">${simpleMd(data.comparison || 'No result')}</div>`;
     } else {
+      _lastCompareData = null;
       el.innerHTML = '<div style="color:var(--err)">对比失败</div>';
     }
-  } catch (e) { el.innerHTML = `<div style="color:var(--err)">请求失败: ${e.message}</div>`; }
+  } catch (e) {
+    _lastCompareData = null;
+    el.innerHTML = `<div style="color:var(--err)">请求失败: ${e.message}</div>`;
+  }
+}
+
+/* ---- Export: PDF (backend download) ---- */
+async function exportPdf() {
+  if (!_lastCompareData) { alert('请先生成对比报告'); return; }
+
+  const btn = document.getElementById('compare-export-pdf');
+  if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+
+  try {
+    const resp = await fetch(`${API_BASE}/compare/export/pdf`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        entity_a: _lastCompareData.entity_a,
+        entity_b: _lastCompareData.entity_b,
+        common_relations: _lastCompareData.common_relations,
+        comparison: _lastCompareData.comparison
+      })
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: '未知错误' }));
+      alert('导出失败: ' + (err.detail || resp.statusText));
+      return;
+    }
+    const blob = await resp.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const disp = resp.headers.get('Content-Disposition');
+    let filename = 'comparison_report.pdf';
+    if (disp) {
+      const match = disp.match(/filename="?(.+?)"?$/);
+      if (match) filename = match[1];
+    }
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('导出请求失败: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '导出 PDF'; }
+  }
+}
+
+/* ---- Export: DOCX ---- */
+async function exportDocx() {
+  if (!_lastCompareData) { alert('请先生成对比报告'); return; }
+
+  const btn = document.getElementById('compare-export-docx');
+  if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+
+  try {
+    const resp = await fetch(`${API_BASE}/compare/export/docx`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        entity_a: _lastCompareData.entity_a,
+        entity_b: _lastCompareData.entity_b,
+        common_relations: _lastCompareData.common_relations,
+        comparison: _lastCompareData.comparison
+      })
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: '未知错误' }));
+      alert('导出失败: ' + (err.detail || resp.statusText));
+      return;
+    }
+    const blob = await resp.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const disp = resp.headers.get('Content-Disposition');
+    let filename = 'comparison_report.docx';
+    if (disp) {
+      const match = disp.match(/filename="?(.+?)"?$/);
+      if (match) filename = match[1];
+    }
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('导出请求失败: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '导出 DOCX'; }
+  }
 }

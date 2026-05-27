@@ -140,7 +140,7 @@ async function chatSend() {
   if (cursor.parentNode) cursor.remove();
   if (fullText) {
     bubble.innerHTML = '<p>' + simpleMd(escapeHtml(fullText)) + '</p>';
-  } else if (!bubble.innerHTML.includes('Request failed') && !bubble.innerHTML.includes('Error:')) {
+  } else if (!bubble.innerHTML.includes('Request failed') && !bubble.innerHTML.includes('Error') && !bubble.innerHTML.includes('错误')) {
     bubble.innerHTML = '<p style="color:var(--text-dim)">无响应 — 检查后端</p>';
   }
 

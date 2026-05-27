@@ -70,6 +70,10 @@
         <input type="text" id="compareA" placeholder="实体A..." />
         <input type="text" id="compareB" placeholder="实体B..." />
         <button onclick="compareEntities()" class="btn-secondary">生成报告</button>
+        <div class="compare-export-row">
+          <button id="compare-export-pdf" onclick="exportPdf()" class="btn-export">导出 PDF</button>
+          <button id="compare-export-docx" onclick="exportDocx()" class="btn-export">导出 DOCX</button>
+        </div>
       </div>
       <div id="compareResult" style="margin-top:6px;font-size:11px;color:var(--text-dim);max-height:186px;overflow-y:auto;line-height:1.7;"></div>
     </div>

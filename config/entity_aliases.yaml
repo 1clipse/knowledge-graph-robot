@@ -1,0 +1,66 @@
+# Entity alias / synonym configuration
+# Maps variant names to canonical names during ingest and query.
+# Used by EntityResolver for name normalization.
+#
+# Format:
+#   - canonical: "canonical name"
+#     type: "EntityType"
+#     aliases: ["variant1", "variant2", ...]
+
+aliases:
+  - canonical: "FANUC"
+    type: "Manufacturer"
+    aliases: ["发那科", "Fanuc Robotics", "FANUC Robotics", "Fanuc Ltd"]
+
+  - canonical: "安川电机"
+    type: "Manufacturer"
+    aliases: ["Yaskawa", "安川", "YASKAWA Electric", "YASKAWA"]
+
+  - canonical: "ABB"
+    type: "Manufacturer"
+    aliases: ["ABB Robotics", "ABB Group", "Asea Brown Boveri"]
+
+  - canonical: "KUKA"
+    type: "Manufacturer"
+    aliases: ["库卡", "KUKA Robotics", "KUKA AG"]
+
+  - canonical: "川崎重工"
+    type: "Manufacturer"
+    aliases: ["Kawasaki", "川崎", "Kawasaki Heavy Industries", "Kawasaki Robotics"]
+
+  - canonical: "那智不二越"
+    type: "Manufacturer"
+    aliases: ["Nachi", "那智", "Nachi-Fujikoshi", "Nachi Robotic Systems"]
+
+  - canonical: "史陶比尔"
+    type: "Manufacturer"
+    aliases: ["Stäubli", "Staubli", "史陶比尔集团", "Stäubli Robotics"]
+
+  - canonical: "爱普生"
+    type: "Manufacturer"
+    aliases: ["Epson", "Epson Robots", "Seiko Epson"]
+
+  - canonical: "埃斯顿"
+    type: "Manufacturer"
+    aliases: ["Estun", "Estun Automation", "Estun Robotics"]
+
+  - canonical: "汇川技术"
+    type: "Manufacturer"
+    aliases: ["汇川", "Inovance", "Inovance Technology"]
+
+  - canonical: "新松机器人"
+    type: "Manufacturer"
+    aliases: ["新松", "SIASUN", "沈阳新松", "新松公司"]
+
+  - canonical: "优傲机器人"
+    type: "Manufacturer"
+    aliases: ["优傲", "UR", "Universal Robots"]
+
+name_normalization:
+  # Normalize common variations to canonical forms during matching
+  # Applied BEFORE alias lookup
+  lowercase_match: true
+  trim_whitespace: true
+  collapse_spaces: true
+  # Model number normalization: remove spaces/hyphens for comparison
+  normalize_model_numbers: true

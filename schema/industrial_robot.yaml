@@ -148,6 +148,65 @@ entity_types:
       version: { type: "string", required: false, description: "版本号" }
       description: { type: "string", required: false, description: "详细描述" }
 
+  Drawing:
+    label_zh: "CAD图纸"
+    label_en: "Drawing"
+    description: "CAD工程图纸(DXF/DWG/STEP)，包含几何和标注信息"
+    properties:
+      name: { type: "string", required: true, description: "图纸名称或图号" }
+      drawing_type: { type: "string", required: false, description: "图纸类型(零件图/装配图/电气图/液压图)" }
+      file_format: { type: "string", required: false, description: "文件格式(DXF/DWG/STEP/IGES)" }
+      version: { type: "string", required: false, description: "图纸版本号" }
+      author: { type: "string", required: false, description: "制图者/作者" }
+      page_count: { type: "integer", required: false, description: "页数" }
+      description: { type: "string", required: false, description: "图纸描述" }
+
+  Part:
+    label_zh: "机械零件"
+    label_en: "Part"
+    description: "机械零件/部品，由CAD图纸定义或装配体包含"
+    properties:
+      name: { type: "string", required: true, description: "零件名称" }
+      part_number: { type: "string", required: false, description: "零件号/图号" }
+      material: { type: "string", required: false, description: "材料名称" }
+      weight: { type: "float", required: false, description: "重量(kg)" }
+      quantity: { type: "integer", required: false, description: "数量" }
+      description: { type: "string", required: false, description: "零件描述" }
+
+  Assembly:
+    label_zh: "装配体"
+    label_en: "Assembly"
+    description: "装配体/子装配体，包含零件和其他装配体"
+    properties:
+      name: { type: "string", required: true, description: "装配体名称" }
+      assembly_type: { type: "string", required: false, description: "装配类型(总成/子装配体/部件组)" }
+      level: { type: "integer", required: false, description: "装配层级(0=顶层)" }
+      description: { type: "string", required: false, description: "装配体描述" }
+
+  Dimension:
+    label_zh: "尺寸标注"
+    label_en: "Dimension"
+    description: "CAD图纸中的尺寸/公差标注信息"
+    properties:
+      name: { type: "string", required: true, description: "尺寸标注文本/标识" }
+      dimension_type: { type: "string", required: false, description: "类型(线性/角度/直径/半径/螺纹)" }
+      value: { type: "float", required: false, description: "尺寸数值" }
+      unit: { type: "string", required: false, description: "单位(mm/inch/deg)" }
+      tolerance_upper: { type: "float", required: false, description: "上偏差" }
+      tolerance_lower: { type: "float", required: false, description: "下偏差" }
+      description: { type: "string", required: false, description: "详细描述" }
+
+  CADLayer:
+    label_zh: "CAD图层"
+    label_en: "CADLayer"
+    description: "CAD图纸中的图层，用于组织几何实体"
+    properties:
+      name: { type: "string", required: true, description: "图层名称" }
+      entity_count: { type: "integer", required: false, description: "图层内实体数量" }
+      layer_color: { type: "string", required: false, description: "图层颜色" }
+      line_type: { type: "string", required: false, description: "线型(实线/虚线/中心线等)" }
+      description: { type: "string", required: false, description: "图层描述" }
+
 relation_types:
   manufactures:
     label_zh: "生产"
@@ -317,6 +376,107 @@ relation_types:
     target: "Manufacturer"
     description: "母子公司关系"
     properties: {}
+
+  # ── CAD/STEP 图纸与零件关系 ──
+
+  drawing_defines:
+    label_zh: "图纸定义"
+    label_en: "DRAWING_DEFINES"
+    source: "Drawing"
+    target: "Part"
+    description: "CAD图纸定义一个机械零件"
+    properties:
+      sheet_number: { type: "integer", required: false, description: "图页编号" }
+
+  drawing_defines_assembly:
+    label_zh: "图纸定义装配体"
+    label_en: "DRAWING_DEFINES_ASSEMBLY"
+    source: "Drawing"
+    target: "Assembly"
+    description: "CAD图纸定义一个装配体"
+    properties: {}
+
+  assembly_contains_part:
+    label_zh: "装配包含零件"
+    label_en: "ASSEMBLY_CONTAINS_PART"
+    source: "Assembly"
+    target: "Part"
+    description: "装配体包含零件"
+    properties:
+      quantity: { type: "integer", required: false, description: "数量" }
+      position_ref: { type: "string", required: false, description: "位号" }
+
+  assembly_contains_sub:
+    label_zh: "包含子装配体"
+    label_en: "ASSEMBLY_CONTAINS_SUB"
+    source: "Assembly"
+    target: "Assembly"
+    description: "装配体包含子装配体"
+    properties:
+      quantity: { type: "integer", required: false, description: "数量" }
+
+  part_has_dimension:
+    label_zh: "零件尺寸"
+    label_en: "PART_HAS_DIMENSION"
+    source: "Part"
+    target: "Dimension"
+    description: "零件具有尺寸标注"
+    properties:
+      is_critical: { type: "boolean", required: false, description: "是否为关键尺寸" }
+
+  drawing_has_layer:
+    label_zh: "图纸包含图层"
+    label_en: "DRAWING_HAS_LAYER"
+    source: "Drawing"
+    target: "CADLayer"
+    description: "CAD图纸包含图层"
+    properties: {}
+
+  part_made_of:
+    label_zh: "零件材料"
+    label_en: "PART_MADE_OF"
+    source: "Part"
+    target: "Material"
+    description: "零件由材料制成"
+    properties:
+      surface_treatment: { type: "string", required: false, description: "表面处理" }
+
+  robot_has_part:
+    label_zh: "机器人包含零件"
+    label_en: "ROBOT_HAS_PART"
+    source: "Robot"
+    target: "Part"
+    description: "机器人包含定制机械零件"
+    properties:
+      location: { type: "string", required: false, description: "安装位置" }
+
+# ── 语义推理规则 (Semantic Reasoning Rules) ──
+# These drive the Reasoner for automatic inference in the graph.
+semantics:
+  subclass_of:
+    ServoMotor: "Component"
+    Reducer: "Component"
+    Controller: "Component"
+    Sensor: "Component"
+    EndEffector: "Component"
+    Drawing: "Entity"
+    Part: "Entity"
+    Assembly: "Entity"
+    Dimension: "Entity"
+    CADLayer: "Entity"
+
+  transitive_relations:
+    - contains
+    - assembly_contains_sub
+    - subsidiary_of
+
+  symmetric_relations:
+    - competitor_of
+    - component_compatible
+
+  inverse_pairs:
+    - [manufactures, manufactured_by]
+    - [assembly_contains_part, part_of_assembly]
 
 sample_data:
   entities:

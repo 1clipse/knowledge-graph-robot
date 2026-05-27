@@ -1,6 +1,6 @@
 # Industrial Robot Knowledge Graph
 
-工业机器人知识图谱系统 — 基于 Neo4j + LLM 的制造知识管理与智能问答平台。
+工业机器人知识图谱系统 — 基于 Neo4j + LLM + spaCy 的制造知识管理与智能问答平台。4 级提取漏斗（规则 → spaCy NER → LLM）+ GraphRAG 检索 + 质量评估 + 语义推理。
 
 > Created by **Heart_ziyi**
 
@@ -20,23 +20,24 @@
                               │                                  │
      Data Sources             │  ┌──────────────────────────┐   │
      ┌──────────┐             │  │      INGEST 路由          │   │
-     │ PDF/CAD  │──┐          │  │  /text  /file  /batch     │   │
+     │ PDF/DOCX │──┐          │  │  /text  /file  /batch     │   │
      │ DWG/DXF  │  │          │  │  /url   /files  /logs     │   │
      │ STEP/IGES│  │  ┌───────┤  ├──────────────────────────┤   │
-     │ CSV      │──┼──┤ 提取器 │  │      QUERY 路由          │   │
-     │ Text     │  │  │       │  │  /search  /stats  /path   │   │
-     └──────────┘  │  │ ┌────────────┐ ┌──────────────┐     │   │
-                   │  │ │ Rule引擎   │ │ LLM提取器    │     │   │
-                   └──┤ │ (Regex+)   │ │ (Qwen2.5-7B) │     │   │
-                      │ └────────────┘ └──────────────┘     │   │
+     │ TXT/CSV  │──┼──┤ 提取器 │  │      QUERY 路由          │   │
+     └──────────┘  │  │       │  │  /search  /stats  /path   │   │
+                   │  │ ┌────────────┬───────────┬──────────┐│   │
+                   │  │ │ Rule引擎   │spaCy NER  │LLM提取器 ││   │
+                   └──┤ │ (Tier 2)   │(Tier 3)   │(Tier 4)  ││   │
+                      │ └────────────┴───────────┴──────────┘│   │
+                      │          4-tier extraction funnel     │   │
                       └──────────────────────────────────────┘   │
                               │                                  │
                               ▼                                  │
                       ┌───────────────┐                          │
                       │ 混合检索层     │                          │
                       │ ┌───────────┐ │    ┌───────────────┐    │
-                      │ │向量检索    │ │    │ 实体链接       │    │
-                      │ │BGE-M3 ONNX│ │    │ Span+Fuzzy    │    │
+                      │ │向量检索    │ │    │ 实体消歧+链接  │    │
+                      │ │BGE-M3 ONNX│ │    │ Resolver+Span │    │
                       │ │1024d ANN  │ │    └───────────────┘    │
                       │ ├───────────┤ │                          │
                       │ │关键词检索  │ │                          │
@@ -53,13 +54,15 @@
               │             │                 │                  │
               │    ┌────────┴─────────┐       │                  │
               │    │   推理 & 评估     │       │                  │
-              │    │ ┌──────────────┐ │       │                  │
-              │    │ │ GraphRAG     │ │       │    ┌───────────┐ │
-              │    │ │ Louvain 社区  │ │       │    │  LLM 服务  │ │
-              │    │ ├──────────────┤ │       │    │ Qwen2.5-7B │ │
-              │    │ │ OWL 语义推理 │ │       │    │ :5200/v1   │ │
-              │    │ ├──────────────┤ │       │    │ (P100 GPU) │ │
-              │    │ │ RAGAS 评估   │ │       │    └───────────┘ │
+              │    │ ┌──────────────┐ │       │    ┌───────────┐ │
+              │    │ │ GraphRAG     │ │       │    │  LLM 服务  │ │
+              │    │ │ Louvain 社区  │ │       │    │ Qwen2.5-7B │ │
+              │    │ ├──────────────┤ │       │    │ :5200/v1   │ │
+              │    │ │ OWL 语义推理 │ │       │    │ (P100 GPU) │ │
+              │    │ │ 对称+传递+逆 │ │       │    └───────────┘ │
+              │    │ ├──────────────┤ │       │                  │
+              │    │ │ 引用验证     │ │       │                  │
+              │    │ │ Citation    │ │       │                  │
               │    │ └──────────────┘ │       │                  │
               │    └─────────────────┘       │                  │
               └──────────────────────────────┘                  │
@@ -68,38 +71,58 @@
                      ┌────────────────┐                          │
                      │  Q&A 问答引擎   │                          │
                      │ ┌────────────┐ │                          │
-                     │ │ 引用溯源    │ │                          │
-                     │ │ [P1][P2]   │ │                          │
-                     │ │ Citations  │ │                          │
-                     │ └────────────┘ │                          │
+                     │ │ 引用溯源    │ │   ┌──────────────┐      │
+                     │ │ [P1][P2]   │ │   │ 导出服务      │      │
+                     │ │ Citations  │ │   │ PDF + DOCX   │      │
+                     │ └────────────┘ │   └──────────────┘      │
                      └────────────────┘                          │
                               │                                  │
                               └──────────────────────────────────┘
 ```
 
+## v2.2 更新亮点
+
+### 4 级提取漏斗
+文本进入后依次经过规则正则 (Tier 2, confidence 0.90-0.95) → spaCy NER (Tier 3, 0.75-0.90) → 合并去重 → LLM (Tier 4) 仅补低置信度/稀疏部分。结构化数据（CSV/CAD/DXF）直接走 Tier 1 高置信度映射。提取结果由集中的 `GraphWriter` 负责 batch embedding + schema 校验 + 批量写入 Neo4j。
+
+### GraphRAG 检索 + 引用验证
+`GraphRagRetriever` 统一检索入口，整合向量检索、关键词检索、实体消歧和多跳路径探索。`CitationVerifier` 对 LLM 回答做事实核查，强制每条结论有图谱路径支撑。
+
+### 推理引擎增强
+新增逆关系推理（如 HAS_COMPONENT → COMPONENT_OF）。推理规则从 `schema/industrial_robot.yaml` 动态加载，不再硬编码。
+
+### PDF / DOCX 导出
+对比报告可导出为 PDF（fpdf2 + 微软雅黑）和 DOCX（python-docx），包含属性对比表、共同关系表和 AI 分析。
+
+### 安全防护
+Cypher 查询注入拦截，阻止所有写操作关键字。
+
+### 新增模块
+质量检查器 `quality/checker.py`、实体消歧 `graph/entity_resolver.py` + `config/entity_aliases.yaml`、CAD 适配器 `loaders/cad_adapter.py`、DOCX/TXT 加载器。
+
 ## 功能
 
 ### 数据摄入
-- **多格式支持** — PDF、CSV、DWG/DXF (CAD)、STEP/IGES、TXT、URL 网页抓取
+- **多格式支持** — PDF、DOCX、CSV、DWG/DXF (CAD)、STEP/IGES、TXT、URL 网页抓取
 - **CAD 智能解析** — ODA FileConverter DWG→DXF 自动转换 + SolidWorks 符号保留
 - **批量上传** — 多文件同时上传 + 去重确认
-- **AI 提取** — 可选 LLM 深度提取（更准确但更慢）+ 规则引擎兜底
+- **4 级提取** — Rule → spaCy NER → merge → LLM 兜底
 
 ### 知识检索
 - **混合检索** — 向量语义 (BGE-M3 1024d ONNX) + 关键词全文 (Lucene)，双路合并去重
-- **实体链接** — Span 提取 + Fuzzy 模糊评分，查询→实体精确映射
+- **实体消歧** — EntityResolver 别名映射 + EntityLinker Span/Fuzzy 评分
 - **多跳推理** — 1~3 跳关系链探索
 
 ### 智能问答
 - **RAG 问答** — 基于图谱路径的上下文增强生成
 - **引用溯源** — 回答强制标注数据来源 [P1][P2]...，可追溯每条事实的图谱路径
 - **社区上下文** — GraphRAG Louvain 社区检测 + LLM 摘要，注入全局语义背景
+- **引用验证** — CitationVerifier 事实验证
 
 ### 推理 & 质量
-- **OWL 语义推理** — 对称关系 (competitor_of)、传递关系 (part_of)、子类继承推理
-- **RAGAS 评估** — Faithfulness / Relevancy / ContextPrecision 三维自动评分
+- **OWL 语义推理** — 对称关系、传递关系、逆关系、子类继承推理
 - **质量面板** — 孤立节点检测、属性缺失扫描、重复实体发现、置信度分析
-- **实体对比** — 两个实体并排对比，生成差异报告
+- **实体对比** — 两个实体并排对比 + PDF/DOCX 导出
 
 ## 快速启动
 
@@ -110,6 +133,7 @@ pip install -r requirements.txt
 
 # 前置条件: 运行本地 Neo4j (bolt://localhost:7687)
 # 前置条件: LLM 服务可达 (默认 http://10.117.29.24:5200/v1)
+# 前置条件: spaCy 中文模型 (zh_core_web_lg)
 # 配置 config/.env（参考下方配置说明）
 
 python -m uvicorn api.app:app --host 0.0.0.0 --port 8100
@@ -124,8 +148,8 @@ python -m uvicorn api.app:app --host 0.0.0.0 --port 8100
 
 | 端点 | 说明 |
 |------|------|
-| `POST /api/v1/ingest/text` | 文本摄入 |
-| `POST /api/v1/ingest/file` | 单文件摄入 |
+| `POST /api/v1/ingest/text` | 文本摄入（4 级漏斗） |
+| `POST /api/v1/ingest/file` | 单文件摄入（支持 PDF/DOCX/DXF/TXT/CSV/STEP） |
 | `POST /api/v1/ingest/batch` | 批量文件摄入 |
 | `POST /api/v1/ingest/url` | URL 网页摄入 |
 | `GET /api/v1/ingest/files` | 已上传文件列表 |
@@ -135,8 +159,12 @@ python -m uvicorn api.app:app --host 0.0.0.0 --port 8100
 | `GET /api/v1/query/stats` | 图谱统计 |
 | `GET /api/v1/query/node/{label}/{name}` | 节点详情 |
 | `GET /api/v1/query/shortest-path` | 最短路径查询 |
-| `POST /api/v1/ask` | 知识问答 (RAG) |
+| `POST /api/v1/ask` | 知识问答 (RAG + 引用) |
+| `POST /api/v1/compare` | 实体对比分析 |
+| `POST /api/v1/compare/export/pdf` | 对比报告导出 PDF |
+| `POST /api/v1/compare/export/docx` | 对比报告导出 DOCX |
 | `GET /api/v1/communities` | 社区检测结果 |
+| `GET /api/v1/subgraph` | 全量图谱（limit≤5000） |
 | `GET /api/v1/subgraph/search/{keyword}` | 子图搜索 (可视化) |
 | `GET /api/v1/subgraph/{label}/{name}` | 单节点子图 |
 | `GET /api/v1/quality` | 数据质量报告 |
@@ -166,8 +194,27 @@ LLM_MAX_TOKENS=4096
 # BGE-M3 嵌入模型
 EMBEDDING_MODEL_PATH=E:/huggingface_cache/BAAI/bge-m3
 
+# spaCy 模型
+# pip install zh-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/zh_core_web_lg-3.7.0/zh_core_web_lg-3.7.0-py3-none-any.whl
+
 # DWG 转换器 (可选)
 ODA_CONVERTER_PATH=E:/ODA/ODAFileConverter.exe
+```
+
+### spaCy 配置 (`config/default.yaml`)
+
+```yaml
+spacy:
+  model_path: "models/kg_robot_ner"
+  base_model: "zh_core_web_lg"
+  confidence_threshold: 0.7
+  enabled: true
+```
+
+## 测试
+
+```bash
+pytest tests/ -v    # 119 tests, 10 个测试文件
 ```
 
 ## 技术栈
@@ -176,7 +223,10 @@ ODA_CONVERTER_PATH=E:/ODA/ODAFileConverter.exe
 - **后端**: FastAPI 0.115 + Uvicorn (port 8100)
 - **LLM**: Qwen2.5-7B @ P100 GPU（OpenAI 兼容 API）
 - **嵌入模型**: BGE-M3 1024d (ONNX Runtime / CPU)
+- **NLP**: spaCy 3.7 + zh_core_web_lg + 自定义 NER 模型
 - **图算法**: NetworkX Louvain 社区检测
 - **向量检索**: Neo4j 原生向量索引 + 余弦相似度回退
-- **前端**: Vanilla JS + D3.js v7（力导向图谱）
+- **前端**: Vanilla JS + D3.js v7（力导向图谱，关系中文标签）
 - **CAD 解析**: ezdxf + ODA FileConverter
+- **文档生成**: fpdf2 + python-docx
+- **质量评估**: RAGAS Faithfulness / Relevancy / ContextPrecision

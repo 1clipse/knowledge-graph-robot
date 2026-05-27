@@ -215,6 +215,25 @@ button {
   background: var(--accent-subtle);
 }
 
+/* Compare export buttons */
+.compare-export-row {
+  display: flex; gap: 6px;
+}
+.btn-export {
+  flex: 1;
+  padding: 6px 10px; font-size: 11px; font-weight: 500;
+  border-radius: var(--radius-sm); cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); transition: all 0.15s ease;
+}
+.btn-export:hover {
+  border-color: var(--accent); color: var(--accent);
+  background: var(--accent-subtle);
+}
+.btn-export:disabled {
+  opacity: 0.45; cursor: not-allowed;
+}
+
 /* Path finder */
 .path-finder { display: flex; flex-direction: column; gap: 6px; }
 .path-finder select {

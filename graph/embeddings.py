@@ -58,7 +58,10 @@ def _get_session_and_tokenizer():
 def embed_texts(texts: List[str], batch_size: int = 32) -> List[List[float]]:
     session, tokenizer = _get_session_and_tokenizer()
     if session is None or tokenizer is None:
-        return [[0.0] * _DIM for _ in texts]
+        raise RuntimeError(
+            "Embedding model not available. "
+            f"Model path: {_MODEL_PATH}. Error: {_MODEL_ERROR or 'Unknown'}"
+        )
 
     results: List[List[float]] = []
     for i in range(0, len(texts), batch_size):

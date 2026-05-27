@@ -22,6 +22,12 @@ extraction:
   chunk_size: 2000
   chunk_overlap: 200
 
+spacy:
+  model_path: "models/kg_robot_ner"
+  base_model: "zh_core_web_lg"
+  confidence_threshold: 0.7
+  enabled: true
+
 logging:
   level: "INFO"
   format: "{time:YYYY-MM-DD HH:mm:ss} | {level} | {module}:{function}:{line} | {message}"

@@ -38,6 +38,7 @@ class DomainSchema(BaseModel):
     description: str = ""
     entity_types: Dict[str, EntityType] = Field(default_factory=dict)
     relation_types: Dict[str, RelationType] = Field(default_factory=dict)
+    semantics: Dict[str, Any] = Field(default_factory=dict)
 
 
 _schema_cache: Optional[DomainSchema] = None
@@ -72,6 +73,10 @@ def get_entity_type_names() -> List[str]:
 
 def get_relation_type_names() -> List[str]:
     return list(load_schema().relation_types.keys())
+
+
+def get_semantics() -> Dict[str, Any]:
+    return load_schema().semantics
 
 
 def build_schema_prompt_context() -> str:

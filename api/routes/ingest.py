@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from loguru import logger
@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from api.deps import neo4j_client, schema_manager
 from extractors.llm_extractor import LLMExtractor, ExtractionResult, ExtractedEntity, ExtractedRelation, EntityRef
+from graph.writer import GraphWriter
 from extractors.rule_extractor import RuleExtractor
 from extractors.structured_mapper import StructuredMapper
 from loaders.pdf_loader import PDFLoader
@@ -20,6 +21,8 @@ from loaders.csv_loader import CSVLoader
 from loaders.web_loader import WebLoader
 from loaders.step_loader import STEPLoader
 from loaders.dxf_loader import DXFLoader, DXFMetadata
+from loaders.txt_loader import TXTLoader
+from loaders.docx_loader import DocxLoader
 
 router = APIRouter()
 
@@ -254,96 +257,13 @@ def _stamp_source(result: ExtractionResult, source: str) -> ExtractionResult:
 
 
 def _write_to_graph(result: ExtractionResult) -> None:
-    """Write extraction result to graph with batch embedding and batch write."""
+    """Write extraction result to graph via GraphWriter (centralized schema validation)."""
     if neo4j_client is None:
         raise HTTPException(status_code=503, detail="Database not connected")
-
     if not result.entities:
         return
-
-    # Phase 1: Generate embeddings in batch
-    embed_texts: list[str] = []
-    valid_entities: list = []
-    for entity in result.entities:
-        if schema_manager and not schema_manager.validate_entity_type(entity.type):
-            logger.warning(f"Skipping invalid entity type: {entity.type}")
-            continue
-        embed_texts.append(
-            f"{entity.type} {entity.name} {entity.properties.get('description', '')}"
-        )
-        valid_entities.append(entity)
-
-    embeddings_map: dict[int, list] = {}
-    if embed_texts:
-        try:
-            from graph.embeddings import embed_texts as batch_embed
-            emb_list = batch_embed(embed_texts)
-            for i, emb in enumerate(emb_list):
-                embeddings_map[i] = emb
-        except Exception as e:
-            logger.warning(f"Batch embedding failed, skipping embeddings: {e}")
-
-    # Phase 2: Build entity write queries
-    entity_queries: list[tuple[str, dict]] = []
-    for i, entity in enumerate(valid_entities):
-        props = {k: v for k, v in entity.properties.items() if v is not None}
-        props["name"] = entity.name
-        if entity.source:
-            props["_source"] = entity.source
-        props["_confidence"] = entity.confidence
-        if entity.valid_from:
-            props["valid_from"] = entity.valid_from
-        if entity.valid_to:
-            props["valid_to"] = entity.valid_to
-        if i in embeddings_map:
-            props["_embedding"] = embeddings_map[i]
-
-        from graph.client import _validate_identifier
-        _validate_identifier(entity.type, "entity_type")
-        prop_assignments = ", ".join(f"n.{k} = ${k}" for k in props.keys())
-        query = f"MERGE (n:`{entity.type}` {{name: $name}}) SET {prop_assignments}"
-        entity_queries.append((query, props))
-
-    # Phase 3: Build relation write queries
-    relation_queries: list[tuple[str, dict]] = []
-    for rel in result.relations:
-        if schema_manager and not schema_manager.validate_relation_type(rel.relation_type):
-            logger.warning(f"Skipping invalid relation type: {rel.relation_type}")
-            continue
-        rel_props = {k: v for k, v in rel.properties.items() if v is not None}
-        if rel.source_ref:
-            rel_props["_source"] = rel.source_ref
-        rel_props["_confidence"] = rel.confidence
-        if rel.valid_from:
-            rel_props["valid_from"] = rel.valid_from
-        if rel.valid_to:
-            rel_props["valid_to"] = rel.valid_to
-
-        from graph.client import _validate_identifier
-        _validate_identifier(rel.source.type, "source_type")
-        _validate_identifier(rel.target.type, "target_type")
-        _validate_identifier(rel.relation_type, "relation_type")
-        params: dict = {
-            "source_name": rel.source.name,
-            "target_name": rel.target.name,
-        }
-        set_clause = ""
-        if rel_props:
-            set_clause = " SET " + ", ".join(f"r.{k} = ${k}" for k in rel_props.keys())
-            params.update(rel_props)
-        query = (
-            f"MATCH (s:`{rel.source.type}` {{name: $source_name}}) "
-            f"MATCH (t:`{rel.target.type}` {{name: $target_name}}) "
-            f"MERGE (s)-[r:`{rel.relation_type}`]->(t)"
-            f"{set_clause}"
-        )
-        relation_queries.append((query, params))
-
-    # Phase 4: Execute all writes in two batches (entities first, then relations)
-    if entity_queries:
-        neo4j_client.execute_write_batch(entity_queries)
-    if relation_queries:
-        neo4j_client.execute_write_batch(relation_queries)
+    writer = GraphWriter(neo4j_client, schema_manager)
+    writer.write(result)
 
 
 def _log_ingest(source: str, filename: str, entities_count: int, relations_count: int, success: bool, message: str = "") -> None:
@@ -366,19 +286,7 @@ def _log_ingest(source: str, filename: str, entities_count: int, relations_count
 
 @router.post("/ingest/text", response_model=IngestResponse)
 async def ingest_text(request: IngestTextRequest) -> IngestResponse:
-    result = ExtractionResult()
-    if request.use_llm:
-        try:
-            extractor = LLMExtractor()
-            result = await extractor.extract(request.text)
-        except Exception as e:
-            logger.error(f"LLM extraction failed: {e}")
-            if not request.use_rule_fallback:
-                raise HTTPException(status_code=500, detail=f"LLM extraction failed: {e}")
-
-    if not result.entities and request.use_rule_fallback:
-        rule_extractor = RuleExtractor()
-        result = rule_extractor.extract(request.text)
+    result = await _extract_knowledge(request.text, use_llm=request.use_llm)
 
     _stamp_source(result, "text")
     try:
@@ -438,7 +346,21 @@ def _load_file_content(
                             f"{dxf_meta.block_count} blocks -> {len(dxf_result.entities)} direct entities")
             finally:
                 _safe_remove_dir(os.path.dirname(dxf_path))
+    elif suffix in (".docx", ".doc"):
+        loader = DocxLoader()
+        all_text = loader.load(file_path)
+        logger.info(f"DOCX file parsed: {len(all_text)} chars")
+    elif suffix in (".txt", ".md", ".html", ".htm", ".json", ".xml", ".yaml", ".yml", ".csv.txt"):
+        loader = TXTLoader()
+        all_text = loader.load(file_path)
+        logger.info(f"TXT file loaded: {len(all_text)} chars")
+    elif suffix in (".xlsx", ".xls", ".pptx", ".ppt"):
+        raise ValueError(
+            f"File type '{suffix}' is not yet supported. "
+            "Please convert to PDF/TXT/DOCX and re-upload."
+        )
     else:
+        logger.warning(f"Unknown file type '{suffix}' for '{filename}', attempting UTF-8 decode")
         all_text = raw_bytes.decode("utf-8", errors="ignore")
 
     return all_text, dxf_result
@@ -454,25 +376,110 @@ def _safe_remove_dir(dir_path: str) -> None:
 
 
 async def _extract_knowledge(text: str, use_llm: bool) -> ExtractionResult:
-    """Extract knowledge from text using LLM with rule fallback."""
+    """4-tier extraction funnel: Rule → spaCy → merge → LLM augment (low-confidence).
+
+    Tier 2 (Rule):   Fast regex, confidence 0.90–0.95. Catches known patterns.
+    Tier 3 (spaCy):  NER + dependency relations, confidence 0.75–0.90. Handles variants.
+    Tier 4 (LLM):    Only runs on low-confidence (< 0.7) or missing entity types.
+    """
+    result = ExtractionResult()
+
+    # Tier 2: Rule-based extraction (always run — fast & precise)
+    if text.strip():
+        try:
+            rule_extractor = RuleExtractor()
+            result = rule_extractor.extract(text)
+            for e in result.entities:
+                e.confidence = e.confidence or 0.95
+            for r in result.relations:
+                r.confidence = r.confidence or 0.95
+        except Exception as e:
+            logger.warning(f"Rule extraction failed: {e}")
+
+    # Tier 3: spaCy extraction (adds recall, catches rule misses)
+    if text.strip():
+        try:
+            from extractors.spacy_extractor import SpacyExtractor
+            spacy_extractor = SpacyExtractor()
+            spacy_result = spacy_extractor.extract(text)
+            result = _merge_results(result, spacy_result)
+        except Exception as e:
+            logger.warning(f"spaCy extraction failed: {e}, continuing without it")
+
+    # Tier 4: LLM augments low-confidence / missing areas
     llm_text = text
     if len(text) > 4000:
         llm_text = text[:3500] + "\n...(文本过长已截断，完整内容由规则引擎处理)"
         logger.info(f"File text truncated for LLM: {len(text)} -> {len(llm_text)} chars")
 
-    result = ExtractionResult()
-    if use_llm and llm_text.strip():
+    low_conf_entities = [e for e in result.entities if e.confidence < 0.7]
+    has_missing = len(result.entities) < 3  # very few entities → likely missed something
+
+    if use_llm and llm_text.strip() and (low_conf_entities or has_missing):
         try:
             extractor = LLMExtractor()
-            result = await extractor.extract(llm_text)
+            llm_result = await extractor.extract(llm_text)
+            result = _augment_low_confidence(result, llm_result)
         except Exception as e:
-            logger.error(f"LLM extraction failed: {e}")
-
-    if not result.entities and text.strip():
-        rule_extractor = RuleExtractor()
-        result = rule_extractor.extract(text)
+            logger.error(f"LLM augmentation failed: {e}")
 
     return result
+
+
+def _merge_results(a: ExtractionResult, b: ExtractionResult) -> ExtractionResult:
+    """Merge two extraction results, keeping highest-confidence entries."""
+    entity_map: Dict[str, ExtractedEntity] = {}
+    for e in a.entities:
+        key = f"{e.type}::{e.name}"
+        entity_map[key] = e
+    for e in b.entities:
+        key = f"{e.type}::{e.name}"
+        if key in entity_map:
+            existing = entity_map[key]
+            existing.confidence = max(existing.confidence, e.confidence)
+            for k, v in (e.properties or {}).items():
+                if k not in (existing.properties or {}):
+                    existing.properties[k] = v
+        else:
+            entity_map[key] = e
+
+    rel_set: Set[Tuple[str, str, str]] = set()
+    merged_rels: List[ExtractedRelation] = []
+    for r in list(a.relations) + list(b.relations):
+        key = (r.source.name, r.relation_type, r.target.name)
+        if key not in rel_set:
+            rel_set.add(key)
+            merged_rels.append(r)
+
+    return ExtractionResult(entities=list(entity_map.values()), relations=merged_rels)
+
+
+def _augment_low_confidence(
+    merged: ExtractionResult,
+    llm_result: ExtractionResult,
+) -> ExtractionResult:
+    """Use LLM entities to fill gaps in merged result (low-conf or missing types)."""
+    merged_types: Set[str] = {e.type for e in merged.entities}
+    merged_keys: Set[str] = {f"{e.type}::{e.name}" for e in merged.entities}
+
+    for e in llm_result.entities:
+        key = f"{e.type}::{e.name}"
+        if key not in merged_keys:
+            e.confidence = max(e.confidence, 0.70)  # LLM baseline
+            merged.entities.append(e)
+            merged_keys.add(key)
+
+    rel_set: Set[Tuple[str, str, str]] = {
+        (r.source.name, r.relation_type, r.target.name) for r in merged.relations
+    }
+    for r in llm_result.relations:
+        key = (r.source.name, r.relation_type, r.target.name)
+        if key not in rel_set:
+            r.confidence = max(r.confidence, 0.70)
+            merged.relations.append(r)
+            rel_set.add(key)
+
+    return merged
 
 
 class BatchIngestResponse(BaseModel):
@@ -604,17 +611,7 @@ async def ingest_url(request: IngestURLRequest) -> IngestResponse:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {e}")
 
-    result = ExtractionResult()
-    if request.use_llm:
-        try:
-            extractor = LLMExtractor()
-            result = await extractor.extract(text)
-        except Exception as e:
-            logger.error(f"LLM extraction failed: {e}")
-
-    if not result.entities:
-        rule_extractor = RuleExtractor()
-        result = rule_extractor.extract(text)
+    result = await _extract_knowledge(text, use_llm=request.use_llm)
 
     _stamp_source(result, request.url)
     _write_to_graph(result)

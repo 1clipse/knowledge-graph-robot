@@ -34,13 +34,27 @@ class DXFLoader:
 
     SUPPORTED_EXTENSIONS = {".dxf"}
 
+    # SolidWorks/AutoCAD 注解块前缀 — 是图纸表达，不是机械零件
+    _ANNOTATION_PREFIXES = (
+        "SW_CENTERMARK", "SW_NOTE", "SW_SFSYMBOL", "SW_DATUMTAG",
+        "SW_TABLEANN", "SW_CHAMFER", "SW_DIMENSION", "SW_BOM",
+        "SW_VIEWLABEL", "SW_HATCH", "SW_BALLOON", "SW_GTOL",
+        "SW_REVISION", "SW_SECTION", "SW_DETAIL", "SW_AUX",
+        "ACAD_", "AECC_", "A$C", "DimensionTick",
+    )
+
     @classmethod
     def _is_internal_symbol(cls, name: str) -> bool:
-        """Only filter truly internal DXF constructs (model/paper space, empty names)."""
+        """Filter out internal DXF constructs and CAD-system annotation blocks."""
         if not name or not name.strip():
             return True
-        if name.startswith("*"):  # *Model_Space, *Paper_Space, anonymous blocks
+        n = name.strip()
+        if n.startswith("*"):  # *Model_Space, *Paper_Space, anonymous blocks
             return True
+        upper = n.upper()
+        for prefix in cls._ANNOTATION_PREFIXES:
+            if upper.startswith(prefix.upper()):
+                return True
         return False
 
     def load_metadata(self, file_path: str) -> DXFMetadata:
@@ -249,3 +263,13 @@ class DXFLoader:
             if len(part) >= 2 and not part.isdigit():
                 tokens.add(part)
         return tokens
+
+    def to_graph_data(self, file_path: str) -> "CADGraphData":
+        """Convert DXF metadata to ontology-aligned graph entities.
+
+        Uses CADAdapter to map blocks→Part/Assembly, layers→CADLayer,
+        dimensions→Dimension, and annotations→Material.
+        """
+        from loaders.cad_adapter import CADAdapter
+        meta = self.load_metadata(file_path)
+        return CADAdapter().from_dxf_metadata(meta, file_path)

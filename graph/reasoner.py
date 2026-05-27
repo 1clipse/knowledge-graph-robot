@@ -39,21 +39,21 @@ class Reasoner:
 
     def __init__(self, client: Neo4jClient, rules: Optional[Dict[str, Any]] = None):
         self._client = client
-        self._rules = rules or DEFAULT_RULES
+        self._rules = rules if rules is not None else _load_rules_from_schema()
 
     def infer(self, dry_run: bool = True) -> Dict[str, int]:
         """Run all inference rules. Returns counts of inferred triples."""
         stats: Dict[str, int] = {}
 
-        # 1. Symmetric relations: add reverse edges
         sym_count = self._infer_symmetric(dry_run)
         stats["symmetric_inferred"] = sym_count
 
-        # 2. Transitive relations: add shortcuts
         trans_count = self._infer_transitive(dry_run)
         stats["transitive_inferred"] = trans_count
 
-        # 3. SubClassOf: add extra labels to nodes
+        inv_count = self._infer_inverse(dry_run)
+        stats["inverse_inferred"] = inv_count
+
         sub_count = self._infer_subclass(dry_run)
         stats["subclass_inferences"] = sub_count
 
@@ -119,10 +119,43 @@ class Reasoner:
                 count += 1
         return count
 
+    def _infer_inverse(self, dry_run: bool) -> int:
+        count = 0
+        inverse_pairs = self._rules.get("inverse_pairs", [])
+        for forward, reverse in inverse_pairs:
+            query = f"""
+                MATCH (a)-[r:`{forward}`]->(b)
+                WHERE NOT (b)-[:`{reverse}`]->(a)
+                RETURN a.name AS source, b.name AS target
+            """
+            records = self._client.execute_query(query)
+            for rec in records:
+                if not dry_run:
+                    self._client.execute_write(
+                        f"MATCH (a {{name: $source}}), (b {{name: $target}}) "
+                        f"MERGE (b)-[:`{reverse}` {{inferred: true}}]->(a)",
+                        {"source": rec["source"], "target": rec["target"]},
+                    )
+                count += 1
+        return count
+
     def get_inferable_relations(self) -> Dict[str, Any]:
         """Return what the reasoner can currently infer."""
         return {
-            "subclass_of": self._rules["subclass_of"],
+            "subclass_of": self._rules.get("subclass_of", {}),
             "transitive_count": len(self._rules.get("transitive_relations", [])),
             "symmetric_count": len(self._rules.get("symmetric_relations", [])),
+            "inverse_pair_count": len(self._rules.get("inverse_pairs", [])),
         }
+
+
+def _load_rules_from_schema() -> Dict[str, Any]:
+    """Load reasoning rules from the ontology schema, with fallback to defaults."""
+    try:
+        from schema.loader import get_semantics
+        semantics = get_semantics()
+        if semantics:
+            return dict(semantics)
+    except Exception:
+        pass
+    return dict(DEFAULT_RULES)

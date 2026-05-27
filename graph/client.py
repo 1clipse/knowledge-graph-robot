@@ -200,9 +200,10 @@ class Neo4jClient:
         return records[0]["cnt"] if records else 0
 
     def delete_by_file(self, filename: str) -> int:
-        """Delete all nodes (and their relations) that have file property matching filename."""
+        """Delete all nodes (and their relations) that have file/_source property matching filename."""
         query = (
             "MATCH (n) WHERE n.file = $filename OR n.file = $basename "
+            "OR n._source = $filename OR n._source = $basename "
             "WITH n, count(n) AS cnt DETACH DELETE n RETURN cnt"
         )
         basename = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
@@ -227,7 +228,15 @@ class Neo4jClient:
             "WITH n.file AS filename, collect(DISTINCT labels(n)[0]) AS types, count(n) AS cnt "
             "RETURN filename, types, cnt ORDER BY cnt DESC"
         )
-        return self.execute_query(query)
+        results = self.execute_query(query)
+        if not results:
+            query = (
+                "MATCH (n) WHERE n._source IS NOT NULL "
+                "WITH n._source AS filename, collect(DISTINCT labels(n)[0]) AS types, count(n) AS cnt "
+                "RETURN filename, types, cnt ORDER BY cnt DESC"
+            )
+            return self.execute_query(query)
+        return results
 
     def delete_ingest_log(self, source: str) -> int:
         """Delete a specific IngestLog entry by source identifier."""

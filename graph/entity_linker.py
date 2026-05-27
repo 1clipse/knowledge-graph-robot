@@ -9,13 +9,15 @@ from typing import List, Dict, Any, Optional, Tuple
 from loguru import logger
 
 from graph.client import Neo4jClient
+from graph.entity_resolver import EntityResolver
 
 
 class EntityLinker:
     """Resolve entity mentions in queries to KG entities."""
 
-    def __init__(self, client: Neo4jClient) -> None:
+    def __init__(self, client: Neo4jClient, resolver: Optional[EntityResolver] = None) -> None:
         self._client = client
+        self._resolver = resolver or EntityResolver()
         self._cache: Optional[List[Dict[str, Any]]] = None
 
     def _load_entity_index(self, force: bool = False) -> List[Dict[str, Any]]:
@@ -50,11 +52,28 @@ class EntityLinker:
         results: List[Tuple[Dict[str, Any], float]] = []
         query_lower = query.lower()
 
+        # Build alias-expanded set for matching
+        alias_expansions: Dict[str, str] = {}  # alias_lower -> canonical_lower
+        for ent in entities:
+            name = ent["name"]
+            labels = ent.get("labels", [])
+            for lbl in labels:
+                if lbl == "IngestLog":
+                    continue
+                resolved = self._resolver.resolve(name, lbl)
+                if resolved.resolved_from != "self":
+                    alias_expansions[name.lower()] = resolved.canonical.lower()
+
         for ent in entities:
             name = ent["name"]
             name_lower = name.lower()
+            canonical_lower = alias_expansions.get(name_lower, name_lower)
 
             score = self._score_match(query_lower, name_lower, query, name)
+            # Also try matching against canonical form
+            if canonical_lower != name_lower:
+                canonical_score = self._score_match(query_lower, canonical_lower, query, name)
+                score = max(score, canonical_score)
             if score >= min_score:
                 results.append((ent, score))
 

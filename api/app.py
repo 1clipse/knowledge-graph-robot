@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from loguru import logger
 
 from api.routes import ingest, query, ask, subgraph, quality, eval
+from api.security import auth_middleware, audit_middleware
 from config.settings import get_config
 from graph.client import Neo4jClient
 from graph.schema_manager import SchemaManager
@@ -23,8 +24,6 @@ _UI_DIR = _PROJECT_ROOT / "ui"
 
 _API_KEY = _os.environ.get("KG_API_KEY", "")
 _CORS_ORIGINS = _os.environ.get("KG_CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
-
-SKIP_AUTH_PATHS = {"/health", "/", "/chat", "/docs", "/openapi.json", "/redoc"}
 
 
 @asynccontextmanager
@@ -38,8 +37,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         format=config.logging.log_format,
     )
     logger.info("Starting Industrial Robot Knowledge Graph API...")
-    if not _API_KEY:
-        logger.warning("KG_API_KEY not set — API has no authentication")
+
+    auth_mode = _os.environ.get("KG_AUTH_MODE", "none")
+    if not _API_KEY and auth_mode != "none":
+        logger.warning("KG_AUTH_MODE={} but KG_API_KEY not set — auth will fail", auth_mode)
+    admin_key = _os.environ.get("KG_ADMIN_KEY", "")
+    if not admin_key and auth_mode == "admin_only":
+        logger.warning("KG_AUTH_MODE=admin_only but KG_ADMIN_KEY not set — admin endpoints blocked")
 
     # BGE-M3 model path (read from .env, fall back to default)
     _os.environ.setdefault("EMBEDDING_MODEL_PATH", "E:/huggingface_cache/BAAI/bge-m3")
@@ -94,24 +98,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.middleware("http")
-async def api_key_middleware(request: Request, call_next):
-    if not _API_KEY:
-        return await call_next(request)
-
-    path = request.url.path
-    if path in SKIP_AUTH_PATHS:
-        return await call_next(request)
-
-    if path.startswith("/api/v1/"):
-        auth = request.headers.get("Authorization", "")
-        if not auth:
-            return JSONResponse(status_code=401, content={"detail": "Missing Authorization header"})
-        scheme, _, token = auth.partition(" ")
-        if scheme.lower() != "bearer" or token != _API_KEY:
-            return JSONResponse(status_code=403, content={"detail": "Invalid API key"})
-
-    return await call_next(request)
+# Security: auth middleware (applied before audit so rejected requests are logged)
+app.middleware("http")(auth_middleware)
+# Audit: log all write operations
+app.middleware("http")(audit_middleware)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -141,7 +131,7 @@ async def serve_js(filename: str):
         raise HTTPException(status_code=404)
     if not file_path.exists():
         raise HTTPException(status_code=404)
-    return FileResponse(str(file_path))
+    return FileResponse(str(file_path), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 app.include_router(ingest.router, prefix="/api/v1", tags=["数据摄入"])
 app.include_router(query.router, prefix="/api/v1", tags=["图查询"])
