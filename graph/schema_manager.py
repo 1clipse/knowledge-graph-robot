@@ -126,9 +126,34 @@ class SchemaManager:
     def get_relation_schema(self, relation_type: str) -> Optional[RelationType]:
         return self._schema.relation_types.get(relation_type)
 
+    def get_ui_metadata(self) -> Dict[str, Any]:
+        """Return schema metadata used by the local graph UI renderer."""
+        return {
+            "domain": self._schema.domain,
+            "version": self._schema.version,
+            "entity_types": {
+                name: {
+                    "label_zh": entity.label_zh,
+                    "label_en": entity.label_en,
+                    "description": entity.description,
+                }
+                for name, entity in self._schema.entity_types.items()
+            },
+            "relation_types": {
+                name: {
+                    "label_zh": relation.label_zh,
+                    "label_en": relation.label_en,
+                    "source": relation.source,
+                    "target": relation.target,
+                    "description": relation.description,
+                }
+                for name, relation in self._schema.relation_types.items()
+            },
+        }
+
     def drop_all_data(self) -> None:
-        logger.warning("Dropping all data from graph database!")
-        self._client.execute_write("MATCH (n) DETACH DELETE n")
+        logger.warning(f"Dropping all data for domain {self._domain}!")
+        self._client.execute_write("MATCH (n) WHERE n._domain = $_domain DETACH DELETE n", {"_domain": self._domain})
 
     def drop_constraints(self) -> None:
         try:

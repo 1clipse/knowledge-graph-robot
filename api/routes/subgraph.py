@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
 
-from api.deps import neo4j_client
+from api.deps import get_db, get_schema_manager
+from graph.client import Neo4jClient
 from graph.query import GraphQuery
+from graph.schema_manager import SchemaManager
 
 router = APIRouter()
 
@@ -29,14 +31,25 @@ def _primary_label(labels: List[str]) -> str:
     return labels[0] if labels else ""
 
 
+@router.get("/subgraph/schema", response_model=Dict[str, Any])
+def get_graph_schema_metadata(
+    sm: SchemaManager = Depends(get_schema_manager),
+) -> Dict[str, Any]:
+    """Return local schema metadata used by the graph UI."""
+    if sm is None:
+        raise HTTPException(status_code=503, detail="Schema manager not available")
+    return sm.get_ui_metadata()
+
+
 @router.get("/subgraph", response_model=Dict[str, Any])
 def get_full_graph(
     limit: int = Query(default=1000, le=5000),
+    db: Neo4jClient = Depends(get_db),
 ) -> Dict[str, Any]:
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
 
-    graph_query = GraphQuery(neo4j_client)
+    graph_query = GraphQuery(db)
     try:
         result = graph_query.full_graph(limit)
         for n in result.get("nodes", []):
@@ -53,11 +66,12 @@ def search_subgraph(
     keyword: str,
     depth: int = Query(default=1, le=3),
     limit: int = Query(default=100, le=300),
+    db: Neo4jClient = Depends(get_db),
 ) -> Dict[str, Any]:
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
 
-    graph_query = GraphQuery(neo4j_client)
+    graph_query = GraphQuery(db)
     search_results = graph_query.hybrid_search(keyword, top_k=5)
 
     if not search_results:
@@ -111,11 +125,12 @@ def get_subgraph(
     name: str,
     depth: int = Query(default=2, le=5),
     limit: int = Query(default=200, le=500),
+    db: Neo4jClient = Depends(get_db),
 ) -> Dict[str, Any]:
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
 
-    graph_query = GraphQuery(neo4j_client)
+    graph_query = GraphQuery(db)
     try:
         result = graph_query.subgraph(label, name, depth, limit)
         # Filter out Entity from displayed labels

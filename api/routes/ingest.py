@@ -5,72 +5,97 @@ import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from api.deps import neo4j_client, schema_manager
-from extractors.llm_extractor import LLMExtractor, ExtractionResult, ExtractedEntity, ExtractedRelation, EntityRef
+from api.deps import get_db, get_schema_manager
+from config.settings import get_config
+from extractors.llm_extractor import ExtractionResult, ExtractedEntity, ExtractedRelation, EntityRef
+from extractors.funnel import ExtractionFunnel
+from graph.client import Neo4jClient
+from graph.schema_manager import SchemaManager
 from graph.writer import GraphWriter
-from extractors.rule_extractor import RuleExtractor
 from extractors.structured_mapper import StructuredMapper
 from loaders.pdf_loader import PDFLoader
 from loaders.csv_loader import CSVLoader
-from loaders.web_loader import WebLoader
+from loaders.web_loader import URLSafetyError, WebLoader
 from loaders.step_loader import STEPLoader
-from loaders.dxf_loader import DXFLoader, DXFMetadata
+from loaders.dxf_loader import DXFLoader
+from loaders.cad_adapter import CADGraphData
 from loaders.txt_loader import TXTLoader
 from loaders.docx_loader import DocxLoader
 
 router = APIRouter()
 
-ODA_CONVERTER = os.environ.get("ODA_CONVERTER_PATH", "E:/ODA/ODAFileConverter.exe")
+_ODA_CONVERTER = os.environ.get("ODA_CONVERTER_PATH", "")
+
+
+def _get_oda_path() -> str:
+    """Resolve ODA converter path from env or config."""
+    if _ODA_CONVERTER:
+        return _ODA_CONVERTER
+    try:
+        return get_config().paths.oda_converter_path
+    except Exception:
+        return ""
 
 
 def _convert_dwg_to_dxf(dwg_path: str) -> str:
-    """使用 ODA File Converter 将 DWG 转为 DXF，返回 DXF 文件路径"""
+    """使用 ODA File Converter 将 DWG 转为 DXF，返回需由调用方清理的 DXF 文件路径。"""
     import shutil
 
-    # ODA CLI 要求输入是文件夹，把 DWG 复制到临时输入目录
-    input_dir = tempfile.mkdtemp(prefix="dwg_input_")
-    output_dir = tempfile.mkdtemp(prefix="dwg_output_")
+    oda_path = _get_oda_path()
+    if not oda_path:
+        raise RuntimeError(
+            "ODA File Converter path not configured. "
+            "Set ODA_CONVERTER_PATH env var or add 'paths.oda_converter_path' to config/default.yaml."
+        )
+
     dwg_name = Path(dwg_path).stem
     src_name = os.path.basename(dwg_path)
-    shutil.copy2(dwg_path, os.path.join(input_dir, src_name))
 
-    cmd = [
-        ODA_CONVERTER,
-        input_dir,
-        output_dir,
-        "ACAD2018",
-        "DXF",
-        "0",
-        "0",
-    ]
-    try:
-        creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0x08000000
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, creationflags=creationflags)
-        if result.returncode != 0:
-            stderr = result.stderr.strip() or result.stdout.strip()
-            logger.error(f"ODA conversion failed (rc={result.returncode}): {stderr}")
-            raise RuntimeError(f"DWG→DXF conversion failed: {stderr}")
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("DWG→DXF conversion timed out (60s)")
-    except FileNotFoundError:
-        raise RuntimeError(
-            f"ODA File Converter not found at {ODA_CONVERTER}. "
-            "Set ODA_CONVERTER_PATH env var or install ODA File Converter."
-        )
-    finally:
-        shutil.rmtree(input_dir, ignore_errors=True)
+    # ODA CLI 要求输入/输出都是目录。输入/输出 staging 目录由本函数清理；
+    # 成功转换后的 DXF 复制到独立临时目录并交给调用方清理。
+    with tempfile.TemporaryDirectory(prefix="dwg_input_") as input_dir:
+        with tempfile.TemporaryDirectory(prefix="dwg_output_") as output_dir:
+            shutil.copy2(dwg_path, os.path.join(input_dir, src_name))
 
-    dxf_files = list(Path(output_dir).glob("*.dxf"))
-    if not dxf_files:
-        raise RuntimeError(f"No DXF output found in {output_dir}")
-    logger.info(f"DWG→DXF converted: {dwg_name} → {dxf_files[0].name}")
-    return str(dxf_files[0])
+            cmd = [
+                oda_path,
+                input_dir,
+                output_dir,
+                "ACAD2018",
+                "DXF",
+                "0",
+                "0",
+            ]
+            try:
+                creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0x08000000
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, creationflags=creationflags)
+                if result.returncode != 0:
+                    stderr = result.stderr.strip() or result.stdout.strip()
+                    logger.error(f"ODA conversion failed (rc={result.returncode}): {stderr}")
+                    raise RuntimeError(f"DWG→DXF conversion failed: {stderr}")
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("DWG→DXF conversion timed out (60s)")
+            except FileNotFoundError:
+                raise RuntimeError(
+                    f"ODA File Converter not found at {oda_path}. "
+                    "Set ODA_CONVERTER_PATH env var or install ODA File Converter."
+                )
+
+            dxf_files = list(Path(output_dir).glob("*.dxf"))
+            if not dxf_files:
+                raise RuntimeError(f"No DXF output found in {output_dir}")
+
+            result_dir = tempfile.mkdtemp(prefix="dwg_dxf_")
+            result_path = os.path.join(result_dir, dxf_files[0].name)
+            shutil.copy2(str(dxf_files[0]), result_path)
+            logger.info(f"DWG→DXF converted: {dwg_name} → {dxf_files[0].name}")
+            return result_path
 
 
 def _extract_dwg_strings(file_path: str, filename: str) -> str:
@@ -150,85 +175,41 @@ def _is_valid_entity_name(name: str) -> bool:
     return True
 
 
-def _dxf_meta_to_entities(meta: DXFMetadata, filename: str = "") -> ExtractionResult:
-    """将 DXF 结构化元数据直接映射为知识图谱实体，不依赖 LLM"""
-    entities: List[ExtractedEntity] = []
-    relations: List[ExtractedRelation] = []
-
-    drawing_name = filename or "CAD_Drawing"
-
-    # Block names → Component entities
-    component_names: set[str] = set()
-    for name in meta.block_names:
-        name = name.strip()
-        if _is_valid_entity_name(name):
-            entities.append(ExtractedEntity(name=name, type="Component",
-                                            properties={"source": "DXF_BLOCK", "file": drawing_name}))
-            component_names.add(name)
-
-    # Layer names → referenced as properties on a "Drawing" entity
-    layer_names: list[str] = []
-    for name in meta.layers:
-        name = name.strip()
-        if name:
-            layer_names.append(name)
-
-    # Create a Drawing entity to hold the file metadata
-    drawing_props: Dict[str, Any] = {
-        "dxf_version": meta.file_version,
-        "entity_count": meta.entity_count,
-        "line_count": meta.line_count,
-        "circle_count": meta.circle_count,
-        "arc_count": meta.arc_count,
-        "polyline_count": meta.polyline_count,
-        "file": drawing_name,
-    }
-    if layer_names:
-        drawing_props["layers"] = ", ".join(layer_names[:10])
-    if meta.extents:
-        drawing_props["width"] = meta.extents.get("width")
-        drawing_props["height"] = meta.extents.get("height")
-
-    entities.append(ExtractedEntity(name=drawing_name, type="Component", properties=drawing_props))
-
-    # Block insertions → relations: Drawing contains Component
-    inserted_blocks: Dict[str, int] = {}
-    for ins in meta.inserts:
-        n = ins.get("name", "").strip()
-        if n:
-            inserted_blocks[n] = inserted_blocks.get(n, 0) + 1
-
-    for blk_name, count in inserted_blocks.items():
-        if blk_name in component_names or blk_name:
-            relations.append(ExtractedRelation(
-                source=EntityRef(name=drawing_name, type="Component"),
-                target=EntityRef(name=blk_name, type="Component"),
-                relation_type="contains",
-                properties={"count": count},
-            ))
-
-    # Text annotations → try to extract robot/manufacturer names via keyword matching
-    robot_keywords = {"FANUC", "ABB", "KUKA", "安川", "Yaskawa", "川崎", "Kawasaki",
-                      "爱普生", "Epson", "史陶比尔", "Stäubli", "柯马", "Comau",
-                      "那智", "Nachi", "优傲", "Universal", "埃斯顿", "Estun", "汇川", "新松"}
-    all_texts = meta.texts + meta.mtexts
-    for txt in all_texts:
-        for kw in robot_keywords:
-            if kw.lower() in txt.lower():
-                entities.append(ExtractedEntity(name=kw, type="Manufacturer", properties={"source": "DXF_text"}))
-                break
-
-    # Attributes (TAG=VALUE pairs) → properties or entities
-    for attr in meta.attributes:
-        tag = attr.get("tag", "").strip()
-        text_val = attr.get("text", "").strip()
-        if _is_valid_entity_name(tag) and text_val and len(tag) >= 2:
-            entities.append(ExtractedEntity(
-                name=tag,
-                type="Component",
-                properties={"value": text_val, "source": "DXF_ATTR"}
-            ))
-
+def _cad_graph_data_to_result(data: CADGraphData) -> ExtractionResult:
+    """Convert ontology-aligned CADGraphData into the local extraction result shape."""
+    entities = [
+        ExtractedEntity(
+            name=item.get("name", ""),
+            type=item.get("type", ""),
+            properties=item.get("properties", {}) or {},
+            source=item.get("source", data.file_path),
+            confidence=item.get("confidence", 0.7),
+        )
+        for item in data.entities
+        if _is_valid_entity_name(item.get("name", ""))
+    ]
+    entity_keys = {(entity.type, entity.name) for entity in entities}
+    relations = [
+        ExtractedRelation(
+            source=EntityRef(
+                name=item.get("source", {}).get("name", ""),
+                type=item.get("source", {}).get("type", ""),
+            ),
+            target=EntityRef(
+                name=item.get("target", {}).get("name", ""),
+                type=item.get("target", {}).get("type", ""),
+            ),
+            relation_type=item.get("relation_type", ""),
+            properties=item.get("properties", {}) or {},
+            source_ref=data.file_path,
+            confidence=item.get("confidence", 0.7),
+        )
+        for item in data.relations
+        if (
+            (item.get("source", {}).get("type", ""), item.get("source", {}).get("name", "")) in entity_keys
+            and (item.get("target", {}).get("type", ""), item.get("target", {}).get("name", "")) in entity_keys
+        )
+    ]
     return ExtractionResult(entities=entities, relations=relations)
 
 
@@ -256,19 +237,19 @@ def _stamp_source(result: ExtractionResult, source: str) -> ExtractionResult:
     return result
 
 
-def _write_to_graph(result: ExtractionResult) -> None:
+def _write_to_graph(db: Neo4jClient, sm: SchemaManager, result: ExtractionResult) -> None:
     """Write extraction result to graph via GraphWriter (centralized schema validation)."""
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
     if not result.entities:
         return
-    writer = GraphWriter(neo4j_client, schema_manager)
+    writer = GraphWriter(db, sm)
     writer.write(result)
 
 
-def _log_ingest(source: str, filename: str, entities_count: int, relations_count: int, success: bool, message: str = "") -> None:
+def _log_ingest(db: Neo4jClient, source: str, filename: str, entities_count: int, relations_count: int, success: bool, message: str = "") -> None:
     """Write an IngestLog node to the graph."""
-    if neo4j_client is None:
+    if db is None:
         return
     ts = datetime.now().isoformat()
     props = {
@@ -281,24 +262,28 @@ def _log_ingest(source: str, filename: str, entities_count: int, relations_count
         "success": success,
         "message": message,
     }
-    neo4j_client.create_node("IngestLog", props, merge=True)
+    db.create_node("IngestLog", props, merge=True)
 
 
 @router.post("/ingest/text", response_model=IngestResponse)
-async def ingest_text(request: IngestTextRequest) -> IngestResponse:
+async def ingest_text(
+    request: IngestTextRequest,
+    db: Neo4jClient = Depends(get_db),
+    sm: SchemaManager = Depends(get_schema_manager),
+) -> IngestResponse:
     result = await _extract_knowledge(request.text, use_llm=request.use_llm)
 
     _stamp_source(result, "text")
     try:
-        _write_to_graph(result)
+        _write_to_graph(db, sm, result)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to write to graph: {e}")
-        _log_ingest("text", "", len(result.entities), len(result.relations), False, str(e))
+        _log_ingest(db, "text", "", len(result.entities), len(result.relations), False, str(e))
         raise HTTPException(status_code=500, detail=f"Graph write failed: {e}")
 
-    _log_ingest("text", "", len(result.entities), len(result.relations), True)
+    _log_ingest(db, "text", "", len(result.entities), len(result.relations), True)
     return IngestResponse(
         status="success",
         entities_count=len(result.entities),
@@ -321,14 +306,15 @@ def _load_file_content(
     elif suffix in (".step", ".stp", ".igs", ".iges"):
         loader = STEPLoader()
         all_text = loader.load_as_text(file_path)
-        logger.info(f"STEP file parsed: {len(all_text)} chars of metadata")
+        dxf_result = _cad_graph_data_to_result(loader.to_graph_data(file_path))
+        logger.info(f"STEP file parsed: {len(all_text)} chars, {len(dxf_result.entities)} ontology entities")
     elif suffix == ".dxf":
         loader = DXFLoader()
         dxf_meta = loader.load_metadata(file_path)
         all_text = loader.load_as_text(file_path)
-        dxf_result = _dxf_meta_to_entities(dxf_meta, filename)
+        dxf_result = _cad_graph_data_to_result(loader.to_graph_data(file_path))
         logger.info(f"DXF file parsed: {dxf_meta.entity_count} entities, {dxf_meta.layer_count} layers, "
-                    f"{dxf_meta.block_count} blocks -> {len(dxf_result.entities)} direct entities")
+                    f"{dxf_meta.block_count} blocks -> {len(dxf_result.entities)} ontology entities")
     elif suffix == ".dwg":
         try:
             dxf_path = _convert_dwg_to_dxf(file_path)
@@ -341,9 +327,9 @@ def _load_file_content(
                 loader = DXFLoader()
                 dxf_meta = loader.load_metadata(dxf_path)
                 all_text = loader.load_as_text(dxf_path)
-                dxf_result = _dxf_meta_to_entities(dxf_meta, filename)
+                dxf_result = _cad_graph_data_to_result(loader.to_graph_data(dxf_path))
                 logger.info(f"DWG->DXF parsed: {dxf_meta.entity_count} entities, {dxf_meta.layer_count} layers, "
-                            f"{dxf_meta.block_count} blocks -> {len(dxf_result.entities)} direct entities")
+                            f"{dxf_meta.block_count} blocks -> {len(dxf_result.entities)} ontology entities")
             finally:
                 _safe_remove_dir(os.path.dirname(dxf_path))
     elif suffix in (".docx", ".doc"):
@@ -376,110 +362,8 @@ def _safe_remove_dir(dir_path: str) -> None:
 
 
 async def _extract_knowledge(text: str, use_llm: bool) -> ExtractionResult:
-    """4-tier extraction funnel: Rule → spaCy → merge → LLM augment (low-confidence).
-
-    Tier 2 (Rule):   Fast regex, confidence 0.90–0.95. Catches known patterns.
-    Tier 3 (spaCy):  NER + dependency relations, confidence 0.75–0.90. Handles variants.
-    Tier 4 (LLM):    Only runs on low-confidence (< 0.7) or missing entity types.
-    """
-    result = ExtractionResult()
-
-    # Tier 2: Rule-based extraction (always run — fast & precise)
-    if text.strip():
-        try:
-            rule_extractor = RuleExtractor()
-            result = rule_extractor.extract(text)
-            for e in result.entities:
-                e.confidence = e.confidence or 0.95
-            for r in result.relations:
-                r.confidence = r.confidence or 0.95
-        except Exception as e:
-            logger.warning(f"Rule extraction failed: {e}")
-
-    # Tier 3: spaCy extraction (adds recall, catches rule misses)
-    if text.strip():
-        try:
-            from extractors.spacy_extractor import SpacyExtractor
-            spacy_extractor = SpacyExtractor()
-            spacy_result = spacy_extractor.extract(text)
-            result = _merge_results(result, spacy_result)
-        except Exception as e:
-            logger.warning(f"spaCy extraction failed: {e}, continuing without it")
-
-    # Tier 4: LLM augments low-confidence / missing areas
-    llm_text = text
-    if len(text) > 4000:
-        llm_text = text[:3500] + "\n...(文本过长已截断，完整内容由规则引擎处理)"
-        logger.info(f"File text truncated for LLM: {len(text)} -> {len(llm_text)} chars")
-
-    low_conf_entities = [e for e in result.entities if e.confidence < 0.7]
-    has_missing = len(result.entities) < 3  # very few entities → likely missed something
-
-    if use_llm and llm_text.strip() and (low_conf_entities or has_missing):
-        try:
-            extractor = LLMExtractor()
-            llm_result = await extractor.extract(llm_text)
-            result = _augment_low_confidence(result, llm_result)
-        except Exception as e:
-            logger.error(f"LLM augmentation failed: {e}")
-
-    return result
-
-
-def _merge_results(a: ExtractionResult, b: ExtractionResult) -> ExtractionResult:
-    """Merge two extraction results, keeping highest-confidence entries."""
-    entity_map: Dict[str, ExtractedEntity] = {}
-    for e in a.entities:
-        key = f"{e.type}::{e.name}"
-        entity_map[key] = e
-    for e in b.entities:
-        key = f"{e.type}::{e.name}"
-        if key in entity_map:
-            existing = entity_map[key]
-            existing.confidence = max(existing.confidence, e.confidence)
-            for k, v in (e.properties or {}).items():
-                if k not in (existing.properties or {}):
-                    existing.properties[k] = v
-        else:
-            entity_map[key] = e
-
-    rel_set: Set[Tuple[str, str, str]] = set()
-    merged_rels: List[ExtractedRelation] = []
-    for r in list(a.relations) + list(b.relations):
-        key = (r.source.name, r.relation_type, r.target.name)
-        if key not in rel_set:
-            rel_set.add(key)
-            merged_rels.append(r)
-
-    return ExtractionResult(entities=list(entity_map.values()), relations=merged_rels)
-
-
-def _augment_low_confidence(
-    merged: ExtractionResult,
-    llm_result: ExtractionResult,
-) -> ExtractionResult:
-    """Use LLM entities to fill gaps in merged result (low-conf or missing types)."""
-    merged_types: Set[str] = {e.type for e in merged.entities}
-    merged_keys: Set[str] = {f"{e.type}::{e.name}" for e in merged.entities}
-
-    for e in llm_result.entities:
-        key = f"{e.type}::{e.name}"
-        if key not in merged_keys:
-            e.confidence = max(e.confidence, 0.70)  # LLM baseline
-            merged.entities.append(e)
-            merged_keys.add(key)
-
-    rel_set: Set[Tuple[str, str, str]] = {
-        (r.source.name, r.relation_type, r.target.name) for r in merged.relations
-    }
-    for r in llm_result.relations:
-        key = (r.source.name, r.relation_type, r.target.name)
-        if key not in rel_set:
-            r.confidence = max(r.confidence, 0.70)
-            merged.relations.append(r)
-            rel_set.add(key)
-
-    return merged
+    """Run the shared local extraction funnel used by routes and pipelines."""
+    return await ExtractionFunnel().extract(text, use_llm=use_llm)
 
 
 class BatchIngestResponse(BaseModel):
@@ -496,6 +380,8 @@ class BatchIngestResponse(BaseModel):
 async def ingest_batch(
     files: List[UploadFile] = File(...),
     use_llm: bool = True,
+    db: Neo4jClient = Depends(get_db),
+    sm: SchemaManager = Depends(get_schema_manager),
 ):
     """批量上传多个文件"""
     response = BatchIngestResponse(status="success", total_files=len(files))
@@ -503,6 +389,7 @@ async def ingest_batch(
     for file in files:
         suffix = os.path.splitext(file.filename or "")[1].lower()
         content = await file.read()
+        tmp_path = ""
 
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -517,8 +404,8 @@ async def ingest_batch(
                     e.confidence = 1.0
                 for r in result.relations:
                     r.confidence = 1.0
-                _write_to_graph(result)
-                _log_ingest("file", file.filename or "unknown.csv", len(result.entities), len(result.relations), True)
+                _write_to_graph(db, sm, result)
+                _log_ingest(db, "file", file.filename or "unknown.csv", len(result.entities), len(result.relations), True)
                 response.total_entities += len(result.entities)
                 response.total_relations += len(result.relations)
                 response.success_count += 1
@@ -530,8 +417,8 @@ async def ingest_batch(
                 result.relations = dxf_result.relations + result.relations
 
                 _stamp_source(result, file.filename or "unknown")
-                _write_to_graph(result)
-                _log_ingest("file", file.filename or "unknown", len(result.entities), len(result.relations), True)
+                _write_to_graph(db, sm, result)
+                _log_ingest(db, "file", file.filename or "unknown", len(result.entities), len(result.relations), True)
                 response.total_entities += len(result.entities)
                 response.total_relations += len(result.relations)
                 response.success_count += 1
@@ -554,6 +441,8 @@ async def ingest_batch(
 async def ingest_file(
     file: UploadFile = File(...),
     use_llm: bool = True,
+    db: Neo4jClient = Depends(get_db),
+    sm: SchemaManager = Depends(get_schema_manager),
 ) -> IngestResponse:
     suffix = os.path.splitext(file.filename or "")[1].lower()
     content = await file.read()
@@ -571,8 +460,8 @@ async def ingest_file(
                 e.confidence = 1.0
             for r in result.relations:
                 r.confidence = 1.0
-            _write_to_graph(result)
-            _log_ingest("file", file.filename or "unknown.csv", len(result.entities), len(result.relations), True)
+            _write_to_graph(db, sm, result)
+            _log_ingest(db, "file", file.filename or "unknown.csv", len(result.entities), len(result.relations), True)
             return IngestResponse(
                 status="success",
                 entities_count=len(result.entities),
@@ -587,8 +476,8 @@ async def ingest_file(
         result.relations = dxf_result.relations + result.relations
 
         _stamp_source(result, file.filename or "unknown")
-        _write_to_graph(result)
-        _log_ingest("file", file.filename or "unknown", len(result.entities), len(result.relations), True)
+        _write_to_graph(db, sm, result)
+        _log_ingest(db, "file", file.filename or "unknown", len(result.entities), len(result.relations), True)
         return IngestResponse(
             status="success",
             entities_count=len(result.entities),
@@ -604,18 +493,24 @@ async def ingest_file(
 
 
 @router.post("/ingest/url", response_model=IngestResponse)
-async def ingest_url(request: IngestURLRequest) -> IngestResponse:
+async def ingest_url(
+    request: IngestURLRequest,
+    db: Neo4jClient = Depends(get_db),
+    sm: SchemaManager = Depends(get_schema_manager),
+) -> IngestResponse:
     try:
         web_loader = WebLoader()
         text = web_loader.load(request.url, request.selector)
+    except URLSafetyError as e:
+        raise HTTPException(status_code=400, detail=f"Unsafe URL: {e}")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {e}")
 
     result = await _extract_knowledge(text, use_llm=request.use_llm)
 
     _stamp_source(result, request.url)
-    _write_to_graph(result)
-    _log_ingest("url", request.url, len(result.entities), len(result.relations), True)
+    _write_to_graph(db, sm, result)
+    _log_ingest(db, "url", request.url, len(result.entities), len(result.relations), True)
     return IngestResponse(
         status="success",
         entities_count=len(result.entities),
@@ -627,35 +522,35 @@ async def ingest_url(request: IngestURLRequest) -> IngestResponse:
 
 
 @router.get("/ingest/logs", response_model=List[Dict[str, Any]])
-def get_ingest_logs(limit: int = 50):
+def get_ingest_logs(limit: int = 50, db: Neo4jClient = Depends(get_db)):
     """返回最近的摄入日志记录"""
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
-    return neo4j_client.get_ingest_logs(limit)
+    return db.get_ingest_logs(limit)
 
 
 @router.get("/ingest/files", response_model=List[Dict[str, Any]])
-def list_graph_files():
+def list_graph_files(db: Neo4jClient = Depends(get_db)):
     """列出图谱中所有已上传文件及其关联实体数（不依赖 IngestLog）"""
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
-    return neo4j_client.list_graph_files()
+    return db.list_graph_files()
 
 
 @router.delete("/ingest/log/by-source")
-def delete_ingest_log(source: str):
+def delete_ingest_log(source: str, db: Neo4jClient = Depends(get_db)):
     """删除指定来源的摄入日志"""
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
-    count = neo4j_client.delete_ingest_log(source)
+    count = db.delete_ingest_log(source)
     return {"status": "deleted", "count": count}
 
 
 @router.delete("/ingest/file/{filename:path}")
-def delete_file_entities(filename: str):
+def delete_file_entities(filename: str, db: Neo4jClient = Depends(get_db)):
     """删除指定文件关联的所有图谱节点和关系"""
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
-    count = neo4j_client.delete_by_file(filename)
+    count = db.delete_by_file(filename)
     logger.info(f"Deleted {count} nodes for file '{filename}'")
     return {"status": "deleted", "filename": filename, "nodes_removed": count}

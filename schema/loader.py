@@ -8,6 +8,14 @@ from pydantic import BaseModel, Field
 
 
 _SCHEMA_DIR = Path(__file__).resolve().parent
+_DEFAULT_SCHEMA_KEY = "industrial_robot"
+
+
+def active_domain_key(schema_path: Optional[str] = None) -> str:
+    """Return the stable internal domain key for the active schema."""
+    if schema_path:
+        return Path(schema_path).stem
+    return _DEFAULT_SCHEMA_KEY
 
 
 class PropertyDef(BaseModel):
@@ -48,13 +56,14 @@ def load_schema(schema_path: Optional[str] = None) -> DomainSchema:
     global _schema_cache
     if _schema_cache is not None and schema_path is None:
         return _schema_cache
+    default_schema = schema_path is None
     if schema_path is None:
         schema_path = str(_SCHEMA_DIR / "industrial_robot.yaml")
     with open(schema_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    sample_data = data.pop("sample_data", None)
+    data.pop("sample_data", None)
     schema = DomainSchema(**data)
-    if schema_path is None:
+    if default_schema:
         _schema_cache = schema
     return schema
 

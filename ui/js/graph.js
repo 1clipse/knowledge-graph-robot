@@ -2,19 +2,23 @@
    Graph Module — D3 force graph, search, path finding, stats
    ============================================================ */
 
-const LABEL_COLORS = {
+const DEFAULT_LABEL_COLORS = {
   Robot: '#1E40AF', Manufacturer: '#D97706', Component: '#059669',
   Reducer: '#65A30D', ServoMotor: '#CA8A04', Controller: '#7C3AED',
   Sensor: '#DB2777', ApplicationScenario: '#EA580C', Process: '#0891B2',
   EndEffector: '#4F46E5', Standard: '#0D9488', Material: '#16A34A',
-  Software: '#9333EA', IngestLog: '#94A3B8'
+  Software: '#9333EA', Drawing: '#2563EB', Part: '#0284C7', Assembly: '#7C3AED',
+  Dimension: '#F97316', CADLayer: '#64748B', IngestLog: '#94A3B8'
 };
-const LABEL_ZH = {
+const PALETTE = ['#1E40AF', '#D97706', '#059669', '#65A30D', '#CA8A04', '#7C3AED', '#DB2777', '#EA580C', '#0891B2', '#4F46E5', '#0D9488', '#16A34A', '#9333EA'];
+let LABEL_COLORS = { ...DEFAULT_LABEL_COLORS };
+let LABEL_ZH = {
   Robot: '机器人', Manufacturer: '制造商', Component: '零部件',
   Reducer: '减速器', ServoMotor: '伺服电机', Controller: '控制器',
   Sensor: '传感器', ApplicationScenario: '应用场景', Process: '工艺',
   EndEffector: '末端执行器', Standard: '标准规范', Material: '加工材料',
-  Software: '软件系统', IngestLog: '摄入日志'
+  Software: '软件系统', Drawing: 'CAD图纸', Part: '机械零件', Assembly: '装配体',
+  Dimension: '尺寸标注', CADLayer: 'CAD图层', IngestLog: '摄入日志'
 };
 
 let simulation, svg, g, linkGroup, linkLabelGroup, nodeGroup, zoomBehavior, defs;
@@ -23,25 +27,60 @@ let allEntitiesCache = [];
 let _graphInit = false;
 let _lastCompareData = null;  // stores full CompareResponse for export
 
-// 关系类型 → 中文显示名
-const REL_ZH = {
-  MANUFACTURED_BY: '制造商',
-  HAS_COMPONENT: '包含部件',
-  USES_REDUCER: '使用减速器',
-  USES_SERVO: '使用伺服',
-  USES_CONTROLLER: '使用控制器',
-  USES_SENSOR: '使用传感器',
-  USES_END_EFFECTOR: '末端执行器',
-  APPLIED_IN: '应用于',
-  PERFORMS_PROCESS: '执行工艺',
-  COMPLIES_WITH: '符合标准',
-  PROCESSES_MATERIAL: '加工材料',
-  RUNS_SOFTWARE: '运行软件',
+// 关系类型 → 中文显示名（启动时会优先使用本地 schema metadata 覆盖）
+let REL_ZH = {
+  manufactures: '生产',
+  supplies_component: '供应零部件',
+  uses_component: '使用零部件',
+  uses_reducer: '使用减速器',
+  uses_servo: '使用伺服',
+  uses_controller: '使用控制器',
+  uses_sensor: '使用传感器',
+  uses_end_effector: '使用末端执行器',
+  applied_in: '应用于',
+  performs_process: '执行工艺',
+  process_requires: '工艺需要',
+  process_material: '加工材料',
+  scenario_includes: '场景包含',
+  complies_with: '符合标准',
+  uses_software: '使用软件',
+  component_compatible: '零部件兼容',
+  contains: '包含',
+  competitor_of: '竞争关系',
+  subsidiary_of: '子公司',
+  drawing_defines: '图纸定义',
+  drawing_defines_assembly: '图纸定义装配体',
+  assembly_contains_part: '装配包含零件',
+  assembly_contains_sub: '包含子装配体',
+  part_has_dimension: '零件尺寸',
+  drawing_has_layer: '图纸包含图层',
+  part_made_of: '零件材料',
+  robot_has_part: '机器人包含零件',
   RELATED: '关联',
   DERIVED_FROM: '来源于'
 };
 
-function relLabel(t) { return REL_ZH[t] || t || ''; }
+function relLabel(t) { return REL_ZH[t] || REL_ZH[String(t || '').toLowerCase()] || t || ''; }
+
+async function loadGraphSchemaMetadata() {
+  try {
+    const resp = await fetch(`${API_BASE}/subgraph/schema`);
+    if (!resp.ok) throw new Error(`schema metadata ${resp.status}`);
+    const schema = await resp.json();
+    const entityTypes = schema.entity_types || {};
+    Object.entries(entityTypes).forEach(([label, meta], idx) => {
+      LABEL_ZH[label] = meta.label_zh || label;
+      if (!LABEL_COLORS[label]) LABEL_COLORS[label] = PALETTE[idx % PALETTE.length];
+    });
+    const relationTypes = schema.relation_types || {};
+    Object.entries(relationTypes).forEach(([type, meta]) => {
+      REL_ZH[type] = meta.label_zh || type;
+      if (meta.label_en) REL_ZH[meta.label_en] = meta.label_zh || type;
+    });
+  } catch (e) {
+    console.warn('Graph schema metadata unavailable, using local fallback labels:', e);
+  }
+}
 
 function initGraph() {
   const container = document.getElementById('graph-container');
@@ -179,17 +218,17 @@ function updateGraph(data) {
     .on('mouseout', hideTooltip)
     .on('click', (event, d) => showNodeDetail(d));
 
-  // 节点标签：白底胶囊，在节点正下方
+  // 节点标签：只显示文字，不再绘制白底胶囊，避免空标签产生无用白框
   const labelG = nodesEnter.append('g').attr('class', 'node-label').attr('pointer-events', 'none');
-  labelG.append('rect')
-    .attr('fill', '#FFFFFF').attr('fill-opacity', 0.95)
-    .attr('stroke', '#E2E8F0').attr('stroke-width', 1)
-    .attr('rx', 3).attr('ry', 3);
   labelG.append('text')
     .attr('text-anchor', 'middle')
-    .attr('font-size', 11).attr('font-weight', 500)
+    .attr('font-size', 11).attr('font-weight', 700)
     .attr('font-family', 'Fira Sans, Microsoft YaHei, sans-serif')
     .attr('fill', '#0F172A')
+    .attr('paint-order', 'stroke')
+    .attr('stroke', 'rgba(255,255,255,0.9)')
+    .attr('stroke-width', 3)
+    .attr('stroke-linejoin', 'round')
     .text(d => {
       const name = (d.properties && d.properties.name) || d.id || '';
       return name.length > 12 ? name.substring(0, 11) + '…' : name;
@@ -203,18 +242,14 @@ function updateGraph(data) {
     return name.length > 12 ? name.substring(0, 11) + '…' : name;
   });
 
-  // 重新计算节点 label 胶囊尺寸 + 偏移（圆下方）
+  // 重新计算节点 label 偏移（圆下方）
   nodeGroup.selectAll('g.node').each(function(d) {
     const sel = d3.select(this);
     const t = sel.select('g.node-label text').node();
     if (!t) return;
-    const bb = t.getBBox();
     const r = radiusOf(d);
-    const dy = r + 12;
+    const dy = r + 16;
     sel.select('g.node-label text').attr('y', dy);
-    sel.select('g.node-label rect')
-      .attr('x', bb.x - 4).attr('y', dy + bb.y - 1)
-      .attr('width', bb.width + 8).attr('height', bb.height + 2);
   });
 
   simulation.nodes(currentNodes);

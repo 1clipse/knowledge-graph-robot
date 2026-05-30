@@ -33,3 +33,21 @@ logging:
   format: "{time:YYYY-MM-DD HH:mm:ss} | {level} | {module}:{function}:{line} | {message}"
   rotation: "100 MB"
   retention: "30 days"
+
+embedding:
+  model_path: "models/bge-m3"
+  hf_home: ""
+  hf_hub_offline: false
+
+paths:
+  oda_converter_path: ""
+  font_path: ""
+
+auth:
+  mode: "none"
+  api_key: ""
+  admin_key: ""
+
+app:
+  cors_origins: "http://localhost:3000,http://localhost:8000"
+  audit_log_path: "logs/audit.log"

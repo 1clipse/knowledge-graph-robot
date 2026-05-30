@@ -111,6 +111,29 @@ class TestEntityValidation:
         assert summary.entities_skipped == 0
         mock_client.execute_write_batch.assert_called()
 
+    def test_default_entity_resolver_normalizes_before_write(self, writer, mock_client):
+        """写入路径默认经过 EntityResolver 归一实体和关系端点。"""
+        result = ExtractionResult(entities=[
+            ExtractedEntity(name="发那科", type="Manufacturer", confidence=0.9),
+            ExtractedEntity(name="M-20iA", type="Robot", confidence=0.9),
+        ], relations=[
+            ExtractedRelation(
+                source=EntityRef(name="发那科", type="Manufacturer"),
+                target=EntityRef(name="M-20iA", type="Robot"),
+                relation_type="manufactures",
+                confidence=0.9,
+            ),
+        ])
+
+        writer.write(result)
+
+        query_batches = [call.args[0] for call in mock_client.execute_write_batch.call_args_list]
+        queries = [query for batch in query_batches for query in batch]
+        entity_params = [params for query, params in queries if "MERGE (n:`" in query]
+        rel_params = [params for query, params in queries if "MATCH (s:`" in query]
+        assert any(params["name"] == "FANUC" for params in entity_params)
+        assert rel_params[0]["source_name"] == "FANUC"
+
     def test_unknown_entity_type_is_skipped(self, writer, mock_client):
         """非 schema entity type 被跳过"""
         result = ExtractionResult(entities=[
@@ -208,7 +231,9 @@ class TestProvenanceFields:
         writer.write(result)
         # Verify the query parameters contain provenance fields
         queries = mock_client.execute_write_batch.call_args[0][0]
-        _, params = queries[0]
+        query, params = queries[0]
+        assert "_domain" in query
+        assert params["_domain"] == "industrial_robot"
         assert params["_source"] == "test_source"
         assert params["_confidence"] == 0.85
         assert params["valid_from"] == "2020"
@@ -233,7 +258,9 @@ class TestProvenanceFields:
         queries = mock_client.execute_write_batch.call_args[0][0]
         # Relation queries are the second batch, after entity queries
         rel_queries = [q for q in queries if "MATCH (s:" in q[0]]
-        _, params = rel_queries[0]
+        query, params = rel_queries[0]
+        assert "_domain" in query
+        assert params["_domain"] == "industrial_robot"
         assert params["_source"] == "my_file.pdf"
         assert params["_confidence"] == 0.88
         assert params["valid_from"] == "2021"

@@ -16,6 +16,7 @@ loguru>=0.7.0
 tenacity>=8.2.0
 rapidfuzz>=3.5.0
 sentence-transformers>=2.2.0
+onnxruntime>=1.17.0
 ezdxf>=1.0.0
 spacy>=3.7.0
 zh-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/zh_core_web_lg-3.7.0/zh_core_web_lg-3.7.0-py3-none-any.whl

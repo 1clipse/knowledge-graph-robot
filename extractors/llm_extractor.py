@@ -242,36 +242,16 @@ class LLMExtractor:
                 except json.JSONDecodeError:
                     pass
 
-        # 2. Balanced brace extraction (handles nested objects/arrays correctly)
+        # 2. Find largest JSON object
         start = text.find("{")
-        if start == -1:
-            return None
-        depth = 0
-        in_string = False
-        escape_next = False
-        for i, ch in enumerate(text[start:], start):
-            if escape_next:
-                escape_next = False
-                continue
-            if ch == "\\" and in_string:
-                escape_next = True
-                continue
-            if ch == '"' and not escape_next:
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = text[start:i + 1]
-                    try:
-                        json.loads(candidate)
-                        return candidate
-                    except json.JSONDecodeError:
-                        return None
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            candidate = text[start:end + 1]
+            try:
+                json.loads(candidate)
+                return candidate
+            except json.JSONDecodeError:
+                pass
         return None
 
     async def extract(self, text: str) -> ExtractionResult:
@@ -281,80 +261,26 @@ class LLMExtractor:
         self._total_usage.prompt_tokens += usage.prompt_tokens
         self._total_usage.completion_tokens += usage.completion_tokens
         self._total_usage.total_tokens += usage.total_tokens
-        result = self._parse_response(content)
-        logger.info(
-            f"Extracted {len(result.entities)} entities, "
-            f"{len(result.relations)} relations "
-            f"(tokens: {usage.total_tokens})"
-        )
-        return result
+        return self._parse_response(content)
 
-    async def extract_batch(
-        self, texts: List[str], batch_size: Optional[int] = None
-    ) -> List[ExtractionResult]:
-        batch_size = batch_size or self._config.batch_size
-        semaphore = asyncio.Semaphore(
-            min(batch_size, get_config().extraction.max_concurrent_requests)
-        )
-        results: List[ExtractionResult] = []
+    async def extract_batch(self, texts: List[str]) -> List[ExtractionResult]:
+        semaphore = asyncio.Semaphore(get_config().extraction.max_concurrent_requests)
 
-        async def _limited_extract(t: str) -> ExtractionResult:
+        async def _extract_one(t: str) -> ExtractionResult:
             async with semaphore:
                 return await self.extract(t)
 
-        tasks = [_limited_extract(text) for text in texts]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = [_extract_one(t) for t in texts]
+        return await asyncio.gather(*tasks)
 
-        final: List[ExtractionResult] = []
-        for i, r in enumerate(results):
-            if isinstance(r, Exception):
-                logger.error(f"Batch extraction failed for text {i}: {r}")
-                final.append(ExtractionResult())
+    def disambiguate_entities(self, entities: List[ExtractedEntity]) -> List[ExtractedEntity]:
+        seen: Dict[Tuple[str, str], ExtractedEntity] = {}
+        for e in entities:
+            key = (e.type, e.name)
+            if key not in seen:
+                seen[key] = e
             else:
-                final.append(r)
-        return final
-
-    def disambiguate_entities(
-        self,
-        entities: List[ExtractedEntity],
-        existing_entities: Optional[List[ExtractedEntity]] = None,
-        threshold: Optional[float] = None,
-    ) -> List[ExtractedEntity]:
-        try:
-            from rapidfuzz import fuzz
-        except ImportError:
-            logger.warning("rapidfuzz not installed, skipping disambiguation")
-            return entities
-
-        threshold = threshold or get_config().extraction.entity_similarity_threshold
-        merged: List[ExtractedEntity] = []
-        pool = list(existing_entities or []) + entities
-        seen: Dict[str, ExtractedEntity] = {}
-
-        for entity in pool:
-            key = f"{entity.type}::{entity.name}"
-            if key in seen:
                 existing = seen[key]
-                for k, v in entity.properties.items():
-                    if k not in existing.properties and v:
-                        existing.properties[k] = v
-                continue
-
-            found_similar = False
-            for existing_key, existing in seen.items():
-                if not existing_key.startswith(f"{entity.type}::"):
-                    continue
-                existing_name = existing_key.split("::", 1)[1]
-                score = fuzz.ratio(entity.name, existing_name) / 100.0
-                if score >= threshold:
-                    for k, v in entity.properties.items():
-                        if k not in existing.properties and v:
-                            existing.properties[k] = v
-                    found_similar = True
-                    break
-
-            if not found_similar:
-                seen[key] = entity
-                merged.append(entity)
-
-        return merged
+                existing.properties.update({k: v for k, v in e.properties.items() if v})
+                existing.confidence = max(existing.confidence, e.confidence)
+        return list(seen.values())

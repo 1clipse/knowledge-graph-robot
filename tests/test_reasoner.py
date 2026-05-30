@@ -16,7 +16,13 @@ def mock_client():
 
 @pytest.fixture
 def reasoner(mock_client):
-    return Reasoner(mock_client, rules=DEFAULT_RULES)
+    rules = {
+        "subclass_of": DEFAULT_RULES["subclass_of"],
+        "transitive_relations": ["contains"],
+        "symmetric_relations": ["competitor_of", "component_compatible"],
+        "inverse_pairs": [["manufactures", "manufactured_by"]],
+    }
+    return Reasoner(mock_client, rules=rules)
 
 
 class TestReasonerInit:
@@ -57,19 +63,25 @@ class TestReasonerInfer:
         mock_client.execute_query.return_value = [
             {"source": "FANUC", "target": "ABB", "name": "FANUC"},
         ]
-        r = Reasoner(mock_client, rules=DEFAULT_RULES)
+        rules = {
+            "subclass_of": DEFAULT_RULES["subclass_of"],
+            "transitive_relations": [],
+            "symmetric_relations": ["competitor_of"],
+            "inverse_pairs": [],
+        }
+        r = Reasoner(mock_client, rules=rules)
         r.infer(dry_run=False)
         assert mock_client.execute_write.call_count >= 1
 
 
 class TestReasonerSymmetric:
     def test_symmetric_inference_count(self, reasoner, mock_client):
-        # 2 symmetric relations × 1 record each = 2
+        # 2 schema-backed symmetric relations × 1 record each = 2
         mock_client.execute_query.return_value = [
             {"source": "A", "target": "B"},
         ]
         count = reasoner._infer_symmetric(dry_run=True)
-        assert count == 2  # one per symmetric relation in DEFAULT_RULES
+        assert count == 2
 
     def test_symmetric_no_rows(self, reasoner, mock_client):
         mock_client.execute_query.return_value = []
@@ -93,7 +105,7 @@ class TestReasonerSubclass:
             {"name": "IRB 6700"},
         ]
         count = reasoner._infer_subclass(dry_run=True)
-        assert count >= 0  # depends on subclass_of rules
+        assert count >= 0
 
 
 class TestReasonerInverse:
@@ -102,7 +114,99 @@ class TestReasonerInverse:
             {"source": "FANUC", "target": "M-20iA"},
         ]
         count = reasoner._infer_inverse(dry_run=True)
-        assert count >= 0
+        assert count == 1
+
+
+class TestReasonerLabelScopedMatching:
+    def test_symmetric_write_uses_schema_labels(self, mock_client):
+        mock_client.execute_query.return_value = [
+            {"source": "FANUC", "target": "ABB"},
+        ]
+        r = Reasoner(
+            mock_client,
+            rules={
+                "subclass_of": {},
+                "transitive_relations": [],
+                "symmetric_relations": ["competitor_of"],
+                "inverse_pairs": [],
+            },
+        )
+
+        count = r._infer_symmetric(dry_run=False)
+
+        assert count == 1
+        query = mock_client.execute_write.call_args[0][0]
+        params = mock_client.execute_write.call_args[0][1]
+        assert "MATCH (a:`Manufacturer`" in query
+        assert "(b:`Manufacturer`" in query
+        assert "MATCH (a {name: $source})" not in query
+        assert params == {"source": "FANUC", "target": "ABB"}
+
+    def test_transitive_write_uses_schema_labels(self, mock_client):
+        mock_client.execute_query.return_value = [
+            {"source": "AssemblyA", "mid": "AssemblyB", "target": "AssemblyC"},
+        ]
+        r = Reasoner(
+            mock_client,
+            rules={
+                "subclass_of": {},
+                "transitive_relations": ["assembly_contains_sub"],
+                "symmetric_relations": [],
+                "inverse_pairs": [],
+            },
+        )
+
+        count = r._infer_transitive(dry_run=False)
+
+        assert count == 1
+        query = mock_client.execute_write.call_args[0][0]
+        params = mock_client.execute_write.call_args[0][1]
+        assert "MATCH (a:`Assembly`" in query
+        assert "(c:`Assembly`" in query
+        assert "MATCH (a {name: $source})" not in query
+        assert params == {"source": "AssemblyA", "target": "AssemblyC"}
+
+    def test_inverse_write_uses_forward_relation_schema_labels(self, mock_client):
+        mock_client.execute_query.return_value = [
+            {"source": "FANUC", "target": "M-20iA"},
+        ]
+        r = Reasoner(
+            mock_client,
+            rules={
+                "subclass_of": {},
+                "transitive_relations": [],
+                "symmetric_relations": [],
+                "inverse_pairs": [["manufactures", "manufactured_by"]],
+            },
+        )
+
+        count = r._infer_inverse(dry_run=False)
+
+        assert count == 1
+        query = mock_client.execute_write.call_args[0][0]
+        params = mock_client.execute_write.call_args[0][1]
+        assert "MATCH (a:`Manufacturer`" in query
+        assert "(b:`Robot`" in query
+        assert "MATCH (a {name: $source})" not in query
+        assert params == {"source": "FANUC", "target": "M-20iA"}
+
+    def test_relation_without_schema_endpoint_is_skipped(self, mock_client):
+        mock_client.execute_query.return_value = [
+            {"source": "A", "target": "B"},
+        ]
+        r = Reasoner(
+            mock_client,
+            rules={
+                "subclass_of": {},
+                "transitive_relations": ["part_of"],
+                "symmetric_relations": ["same_as"],
+                "inverse_pairs": [],
+            },
+        )
+
+        assert r._infer_symmetric(dry_run=False) == 0
+        assert r._infer_transitive(dry_run=False) == 0
+        mock_client.execute_write.assert_not_called()
 
 
 class TestGetInferableRelations:

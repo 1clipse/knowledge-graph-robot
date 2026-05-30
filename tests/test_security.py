@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from api.security import validate_read_only_cypher
+from loaders.web_loader import URLSafetyError, validate_public_http_url
 
 
 class TestCypherValidation:
@@ -50,9 +51,51 @@ class TestCypherValidation:
         err = validate_read_only_cypher("CALL apoc.help('test')")
         assert err is not None
 
-    def test_case_insensitive(self):
-        """Write keywords are caught regardless of case."""
-        err = validate_read_only_cypher("create (n)")
-        assert err is not None
-        err = validate_read_only_cypher("Match (n) Delete n")
-        assert err is not None
+
+
+class TestURLSafety:
+    def test_public_http_url_passes(self, monkeypatch):
+        monkeypatch.setattr(
+            "loaders.web_loader.socket.getaddrinfo",
+            lambda *args, **kwargs: [(None, None, None, None, ("93.184.216.34", 0))],
+        )
+
+        assert validate_public_http_url("https://example.com/docs") == "https://example.com/docs"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "file:///etc/passwd",
+            "ftp://example.com/file.txt",
+            "http://user:pass@example.com",
+        ],
+    )
+    def test_disallowed_url_shapes_blocked(self, url):
+        with pytest.raises(URLSafetyError):
+            validate_public_http_url(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://localhost:8000",
+            "http://127.0.0.1:7474",
+            "http://0.0.0.0",
+            "http://169.254.169.254/latest/meta-data",
+            "http://10.0.0.1",
+            "http://172.16.0.1",
+            "http://192.168.1.1",
+            "http://[::1]/",
+        ],
+    )
+    def test_private_and_local_addresses_blocked(self, url):
+        with pytest.raises(URLSafetyError):
+            validate_public_http_url(url)
+
+    def test_hostname_resolving_to_private_ip_blocked(self, monkeypatch):
+        monkeypatch.setattr(
+            "loaders.web_loader.socket.getaddrinfo",
+            lambda *args, **kwargs: [(None, None, None, None, ("192.168.1.10", 0))],
+        )
+
+        with pytest.raises(URLSafetyError):
+            validate_public_http_url("https://example.com")

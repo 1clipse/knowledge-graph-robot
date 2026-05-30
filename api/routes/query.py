@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from api.deps import neo4j_client
+from api.deps import get_db
 from api.security import audit_log, validate_read_only_cypher
-from graph.client import _validate_identifier
+from graph.client import Neo4jClient, _validate_identifier
 from graph.query import GraphQuery
+from schema.loader import active_domain_key
 
 router = APIRouter()
 
@@ -34,8 +35,8 @@ class StatsResponse(BaseModel):
 
 
 @router.post("/query", response_model=QueryResponse)
-def execute_query(request: QueryRequest) -> QueryResponse:
-    if neo4j_client is None:
+def execute_query(request: QueryRequest, db: Neo4jClient = Depends(get_db)) -> QueryResponse:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
 
     # Block write operations in arbitrary Cypher
@@ -50,7 +51,7 @@ def execute_query(request: QueryRequest) -> QueryResponse:
         raise HTTPException(status_code=403, detail=error)
 
     try:
-        records = neo4j_client.execute_read(request.cypher, request.parameters)
+        records = db.execute_read(request.cypher, request.parameters)
         return QueryResponse(status="success", results=records, count=len(records))
     except Exception as e:
         logger.error(f"Query execution failed: {e}")
@@ -58,14 +59,14 @@ def execute_query(request: QueryRequest) -> QueryResponse:
 
 
 @router.get("/query/node/{label}/{name}", response_model=Dict[str, Any])
-def get_node(label: str, name: str) -> Dict[str, Any]:
-    if neo4j_client is None:
+def get_node(label: str, name: str, db: Neo4jClient = Depends(get_db)) -> Dict[str, Any]:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
     try:
         _validate_identifier(label, "label")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    node = neo4j_client.get_node(label, name)
+    node = db.get_node(label, name)
     if not node:
         raise HTTPException(status_code=404, detail=f"Node {label}/{name} not found")
     return node
@@ -78,8 +79,9 @@ def get_neighbors(
     relation_type: Optional[str] = Query(default=None),
     direction: str = Query(default="both"),
     limit: int = Query(default=50, le=200),
+    db: Neo4jClient = Depends(get_db),
 ) -> List[Dict[str, Any]]:
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
     try:
         _validate_identifier(label, "label")
@@ -87,7 +89,7 @@ def get_neighbors(
             _validate_identifier(relation_type, "relation_type")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    graph_query = GraphQuery(neo4j_client)
+    graph_query = GraphQuery(db)
     return graph_query.neighbors(label, name, relation_type, direction, limit)
 
 
@@ -98,8 +100,9 @@ def shortest_path(
     target_label: str = Query(default=""),
     target_name: str = Query(...),
     max_depth: int = Query(default=5, le=10),
+    db: Neo4jClient = Depends(get_db),
 ) -> List[Dict[str, Any]]:
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
     try:
         if source_label:
@@ -108,7 +111,7 @@ def shortest_path(
             _validate_identifier(target_label, "target_label")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    graph_query = GraphQuery(neo4j_client)
+    graph_query = GraphQuery(db)
     return graph_query.shortest_path(
         source_label, source_name, target_label, target_name, max_depth
     )
@@ -118,10 +121,11 @@ def shortest_path(
 def search_nodes(
     q: str = Query(..., description="搜索关键词"),
     limit: int = Query(default=20, le=100),
+    db: Neo4jClient = Depends(get_db),
 ) -> List[Dict[str, Any]]:
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
-    graph_query = GraphQuery(neo4j_client)
+    graph_query = GraphQuery(db)
     results = graph_query.hybrid_search(q, limit)
     for item in results:
         item.get("node", {}).pop("_embedding", None)
@@ -129,10 +133,10 @@ def search_nodes(
 
 
 @router.get("/query/stats", response_model=StatsResponse)
-def get_statistics() -> StatsResponse:
-    if neo4j_client is None:
+def get_statistics(db: Neo4jClient = Depends(get_db)) -> StatsResponse:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
-    graph_query = GraphQuery(neo4j_client)
+    graph_query = GraphQuery(db)
     stats = graph_query.statistics()
     return StatsResponse(**stats)
 
@@ -141,9 +145,10 @@ def get_statistics() -> StatsResponse:
 def get_timeline(
     label: str = Query(default="", description="实体类型过滤（可选）"),
     limit: int = Query(default=50, le=200),
+    db: Neo4jClient = Depends(get_db),
 ):
     """返回带时间戳的关系时间线，用于时序分析。"""
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
 
     if label:
@@ -157,7 +162,7 @@ def get_timeline(
 
     query = (
         "MATCH (a)-[r]->(b) "
-        "WHERE r.valid_from IS NOT NULL "
+        "WHERE r._domain = $_domain AND a._domain = $_domain AND b._domain = $_domain AND r.valid_from IS NOT NULL "
         f"{label_filter} "
         "RETURN a.name AS source_name, labels(a) AS source_labels, "
         "b.name AS target_name, labels(b) AS target_labels, "
@@ -166,7 +171,7 @@ def get_timeline(
         "LIMIT $limit"
     )
     try:
-        records = neo4j_client.execute_query(query, {"limit": limit})
+        records = db.execute_query(query, {"limit": limit, "_domain": active_domain_key()})
         return [dict(r) for r in records]
     except Exception as e:
         logger.error(f"Timeline query failed: {e}")
@@ -178,9 +183,10 @@ def get_entity_timeline(
     name: str,
     label: str = Query(default=""),
     limit: int = Query(default=30, le=100),
+    db: Neo4jClient = Depends(get_db),
 ):
     """返回特定实体的历史时间线。"""
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
 
     if label:
@@ -194,7 +200,8 @@ def get_entity_timeline(
 
     query = (
         f"MATCH (n{label_clause})-[r]-(m) "
-        "WHERE n.name = $name AND (r.valid_from IS NOT NULL OR r.valid_to IS NOT NULL) "
+        "WHERE n.name = $name AND n._domain = $_domain AND m._domain = $_domain AND r._domain = $_domain "
+        "AND (r.valid_from IS NOT NULL OR r.valid_to IS NOT NULL) "
         "RETURN n.name AS entity_name, labels(n) AS entity_labels, "
         "m.name AS related_name, labels(m) AS related_labels, "
         "type(r) AS relation_type, r.valid_from AS valid_from, r.valid_to AS valid_to, "
@@ -203,7 +210,7 @@ def get_entity_timeline(
         "LIMIT $limit"
     )
     try:
-        records = neo4j_client.execute_query(query, {"name": name, "limit": limit})
+        records = db.execute_query(query, {"name": name, "limit": limit, "_domain": active_domain_key()})
         return [dict(r) for r in records]
     except Exception as e:
         logger.error(f"Entity timeline query failed: {e}")
@@ -211,13 +218,13 @@ def get_entity_timeline(
 
 
 @router.delete("/query/node/{label}/{name}")
-def delete_node(label: str, name: str):
+def delete_node(label: str, name: str, db: Neo4jClient = Depends(get_db)):
     """删除指定实体节点及其所有关系"""
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
     try:
         _validate_identifier(label, "label")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    count = neo4j_client.delete_node(label, name)
+    count = db.delete_node(label, name)
     return {"status": "deleted", "label": label, "name": name, "nodes_removed": count}

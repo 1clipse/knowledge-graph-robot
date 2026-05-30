@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>工业机器人知识图谱 — Industrial Robot KG</title>
+<title>工业机器人知识图谱 — KIMZIYI</title>
 
 <!-- D3.js -->
 <script src="https://cdn.bootcdn.net/ajax/libs/d3/7.9.0/d3.min.js"></script>
@@ -19,20 +19,26 @@
      ============================================================ -->
 <div id="sidebar">
   <div class="brand">
-    <span class="brand-mark">KG</span>
+    <span class="brand-mark">JZ</span>
     <span class="brand-divider"></span>
-    <span class="brand-sub">Industrial Robot</span>
+    <span class="brand-sub">Createby:kimziyi</span>
   </div>
 
   <nav>
     <a class="active" data-view="graph" onclick="switchView('graph')">
-      <span class="nav-icon">&#x2261;</span> 图谱
+      <span class="nav-icon nav-icon-graph" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.4"></circle><circle cx="17" cy="7" r="2.4"></circle><circle cx="12" cy="17" r="2.4"></circle><path d="M9.2 7h5.6M8.2 9.1l2.6 5.7M15.8 9.1l-2.6 5.7"></path></svg>
+      </span> 图谱
     </a>
     <a data-view="chat" onclick="switchView('chat')">
-      <span class="nav-icon">&Sigma;</span> 问答
+      <span class="nav-icon nav-icon-chat" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M5 6.5h14a2 2 0 0 1 2 2v5.2a2 2 0 0 1-2 2H12l-4.2 3.2v-3.2H5a2 2 0 0 1-2-2V8.5a2 2 0 0 1 2-2Z"></path><path d="M8 10h8M8 13h5"></path></svg>
+      </span> 问答
     </a>
     <a data-view="graph" onclick="switchView('graph'); setTimeout(loadFullGraph, 100)">
-      <span class="nav-icon">&#x2304;</span> 全景
+      <span class="nav-icon nav-icon-overview" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"></path><circle cx="12" cy="12" r="3.2"></circle><path d="M12 5.5v2.2M18.5 12h-2.2M12 18.5v-2.2M5.5 12h2.2"></path></svg>
+      </span> 全景
     </a>
   </nav>
 
@@ -183,7 +189,7 @@ function switchView(view) {
     graphView.classList.remove('hidden');
     chatView.classList.remove('visible');
     graphPanels.classList.add('visible');
-    if (!_graphInit) { initGraph(); _graphInit = true; loadStats(); }
+    if (!_graphInit) { ensureGraphInitialized(); }
     setTimeout(() => {
       if (simulation) { simulation.alpha(0.1).restart(); }
       const cw = document.getElementById('graph-container').clientWidth;
@@ -194,10 +200,24 @@ function switchView(view) {
 }
 
 /* ---- Init ---- */
-initGraph(); _graphInit = true;
-loadStats();
-loadIngestLogs();
-setTimeout(loadFullGraph, 300);
+let _graphInitPromise = null;
+function ensureGraphInitialized() {
+  if (_graphInit) return Promise.resolve();
+  if (_graphInitPromise) return _graphInitPromise;
+  _graphInitPromise = loadGraphSchemaMetadata().finally(() => {
+    if (!_graphInit) {
+      initGraph();
+      _graphInit = true;
+      loadStats();
+    }
+  });
+  return _graphInitPromise;
+}
+
+ensureGraphInitialized().then(() => {
+  loadIngestLogs();
+  setTimeout(loadFullGraph, 300);
+});
 </script>
 
 </body>

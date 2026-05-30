@@ -13,7 +13,7 @@ from loguru import logger
 
 from graph.client import Neo4jClient
 from graph.schema_manager import SchemaManager
-from schema.loader import DomainSchema, load_schema
+from schema.loader import DomainSchema, active_domain_key, load_schema
 
 
 @dataclass
@@ -55,10 +55,12 @@ class QualityChecker:
         client: Neo4jClient,
         schema_manager: Optional[SchemaManager] = None,
         schema: Optional[DomainSchema] = None,
+        domain: Optional[str] = None,
     ) -> None:
         self._client = client
         self._schema_manager = schema_manager
         self._schema = schema or load_schema()
+        self._domain = domain or active_domain_key()
 
     def run(self) -> QualityReport:
         report = QualityReport()
@@ -107,11 +109,11 @@ class QualityChecker:
                 try:
                     query = (
                         f"MATCH (n:`{etype}`) "
-                        f"WHERE n.{prop} IS NULL "
+                        f"WHERE n._domain = $_domain AND n.{prop} IS NULL "
                         f"RETURN n.name AS name, labels(n) AS labels, "
                         f"'{prop}' AS missing_prop LIMIT 20"
                     )
-                    records = self._client.execute_query(query)
+                    records = self._client.execute_query(query, {"_domain": self._domain})
                     for r in records:
                         results.append({
                             "entity": r["name"],
@@ -136,14 +138,15 @@ class QualityChecker:
             try:
                 query = (
                     f"MATCH (s)-[r:`{rel_type}`]->(t) "
-                    f"WHERE NOT $expected_src IN labels(s) OR NOT $expected_tgt IN labels(t) "
+                    f"WHERE s._domain = $_domain AND t._domain = $_domain AND r._domain = $_domain "
+                    f"AND (NOT $expected_src IN labels(s) OR NOT $expected_tgt IN labels(t)) "
                     f"RETURN s.name AS source, labels(s) AS source_labels, "
                     f"t.name AS target, labels(t) AS target_labels, "
                     f"'{rel_type}' AS relation_type "
                     f"LIMIT 20"
                 )
                 records = self._client.execute_query(
-                    query, {"expected_src": expected_src, "expected_tgt": expected_tgt}
+                    query, {"expected_src": expected_src, "expected_tgt": expected_tgt, "_domain": self._domain}
                 )
                 for r in records:
                     results.append({
@@ -169,13 +172,13 @@ class QualityChecker:
         # Same name, different labels
         try:
             query = (
-                "MATCH (n) WHERE n.name IS NOT NULL "
+                "MATCH (n) WHERE n.name IS NOT NULL AND n._domain = $_domain "
                 "WITH n.name AS name, collect(DISTINCT labels(n)[0]) AS type_list, count(n) AS cnt "
                 "WHERE cnt > 1 OR size(type_list) > 1 "
                 "RETURN name, type_list, cnt "
                 "ORDER BY cnt DESC LIMIT 30"
             )
-            records = self._client.execute_query(query)
+            records = self._client.execute_query(query, {"_domain": self._domain})
             for r in records:
                 results.append({
                     "name": r["name"],
@@ -196,11 +199,11 @@ class QualityChecker:
         results: List[Dict[str, Any]] = []
         try:
             query = (
-                "MATCH (n) WHERE n._confidence IS NOT NULL AND n._confidence < 0.5 "
+                "MATCH (n) WHERE n._domain = $_domain AND n._confidence IS NOT NULL AND n._confidence < 0.5 "
                 "RETURN labels(n) AS labels, n.name AS name, n._confidence AS confidence "
                 "ORDER BY n._confidence ASC LIMIT 30"
             )
-            records = self._client.execute_query(query)
+            records = self._client.execute_query(query, {"_domain": self._domain})
             for r in records:
                 results.append({
                     "entity": r["name"],
@@ -219,11 +222,11 @@ class QualityChecker:
         results: List[Dict[str, Any]] = []
         try:
             query = (
-                "MATCH (n) WHERE NOT (n)--() AND NOT n:IngestLog "
+                "MATCH (n) WHERE n._domain = $_domain AND NOT (n)--() AND NOT n:IngestLog "
                 "RETURN labels(n) AS labels, n.name AS name "
                 "LIMIT 50"
             )
-            records = self._client.execute_query(query)
+            records = self._client.execute_query(query, {"_domain": self._domain})
             for r in records:
                 results.append({
                     "entity": r["name"],
@@ -243,12 +246,12 @@ class QualityChecker:
         results: List[Dict[str, Any]] = []
         try:
             query = (
-                "MATCH ()-[r]->() WHERE r.valid_from IS NOT NULL AND r.valid_to IS NOT NULL "
+                "MATCH ()-[r]->() WHERE r._domain = $_domain AND r.valid_from IS NOT NULL AND r.valid_to IS NOT NULL "
                 "AND r.valid_from > r.valid_to "
                 "RETURN type(r) AS rel_type, r.valid_from AS valid_from, r.valid_to AS valid_to "
                 "LIMIT 20"
             )
-            records = self._client.execute_query(query)
+            records = self._client.execute_query(query, {"_domain": self._domain})
             for r in records:
                 results.append({
                     "relation_type": r["rel_type"],
@@ -273,7 +276,7 @@ class QualityChecker:
             + len(report.temporal)
         )
         try:
-            records = self._client.execute_query("MATCH (n) RETURN count(n) AS total")
+            records = self._client.execute_query("MATCH (n) WHERE n._domain = $_domain RETURN count(n) AS total", {"_domain": self._domain})
             total_entities = records[0]["total"] if records else 0
             penalty = min(total_issues * 2, 100) if total_entities > 0 else 0
             return max(0, 100 - penalty)

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, Optional
 
 from loguru import logger
 
 from config.settings import get_config
 from extractors.llm_extractor import LLMExtractor, ExtractionResult
-from extractors.rule_extractor import RuleExtractor
+from extractors.funnel import ExtractionFunnel, merge_results
 from extractors.structured_mapper import StructuredMapper
 from graph.client import Neo4jClient
 from graph.schema_manager import SchemaManager
@@ -25,7 +25,7 @@ class IngestPipeline:
         self._client = neo4j_client or Neo4jClient()
         self._schema_manager: Optional[SchemaManager] = None
         self._llm_extractor: Optional[LLMExtractor] = None
-        self._rule_extractor = RuleExtractor()
+        self._funnel: Optional[ExtractionFunnel] = None
         self._mapper = StructuredMapper()
 
     def initialize(self) -> None:
@@ -33,6 +33,7 @@ class IngestPipeline:
         self._schema_manager = SchemaManager(self._client)
         self._schema_manager.initialize_schema()
         self._llm_extractor = LLMExtractor()
+        self._funnel = ExtractionFunnel(llm_extractor=self._llm_extractor)
         logger.info("IngestPipeline initialized")
 
     def _write_result(self, result: ExtractionResult) -> None:
@@ -42,16 +43,8 @@ class IngestPipeline:
         writer.write(result)
 
     async def ingest_text(self, text: str, use_llm: bool = True) -> ExtractionResult:
-        result = ExtractionResult()
-        if use_llm and self._llm_extractor:
-            try:
-                result = await self._llm_extractor.extract(text)
-            except Exception as e:
-                logger.error(f"LLM extraction failed: {e}")
-
-        if not result.entities:
-            result = self._rule_extractor.extract(text)
-
+        funnel = self._funnel or ExtractionFunnel(llm_extractor=self._llm_extractor)
+        result = await funnel.extract(text, use_llm=use_llm)
         self._write_result(result)
         return result
 
@@ -63,17 +56,14 @@ class IngestPipeline:
         chunks = loader.load_and_chunk(file_path)
         logger.info(f"PDF loaded: {len(chunks)} chunks")
 
-        all_results: List[ExtractionResult] = []
-        if self._llm_extractor:
-            all_results = await self._llm_extractor.extract_batch(chunks)
+        funnel = self._funnel or ExtractionFunnel(llm_extractor=self._llm_extractor)
+        chunk_results = [await funnel.extract(chunk, use_llm=True) for chunk in chunks]
+        result = ExtractionResult()
+        for chunk_result in chunk_results:
+            result = merge_results(result, chunk_result)
 
-        merged = self._merge_results(all_results)
-        if not merged.entities:
-            full_text = "\n\n".join(chunks)
-            merged = self._rule_extractor.extract(full_text)
-
-        self._write_result(merged)
-        return merged
+        self._write_result(result)
+        return result
 
     async def ingest_url(self, url: str, selector: Optional[str] = None) -> ExtractionResult:
         loader = WebLoader()
@@ -117,18 +107,6 @@ class IngestPipeline:
     def load_sample_data(self) -> None:
         if self._schema_manager:
             self._schema_manager.load_sample_data()
-
-    def _merge_results(self, results: List[ExtractionResult]) -> ExtractionResult:
-        all_entities: List = []
-        all_relations: List = []
-        for r in results:
-            all_entities.extend(r.entities)
-            all_relations.extend(r.relations)
-
-        if self._llm_extractor and all_entities:
-            all_entities = self._llm_extractor.disambiguate_entities(all_entities)
-
-        return ExtractionResult(entities=all_entities, relations=all_relations)
 
     def close(self) -> None:
         self._client.close()

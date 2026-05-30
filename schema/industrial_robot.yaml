@@ -1,5 +1,5 @@
 domain: "工业机器人"
-version: "1.0.0"
+version: "2.3.0"
 description: "工业机器人行业知识图谱本体定义，涵盖机器人本体、核心零部件、制造商、应用场景、工艺流程等核心概念"
 
 entity_types:

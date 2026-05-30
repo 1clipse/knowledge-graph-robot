@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import ssl
+import threading
 from typing import Any, Dict, List, Optional
 
 import certifi
@@ -30,28 +31,31 @@ class Neo4jClient:
     def __init__(self, config: Optional[Neo4jConfig] = None) -> None:
         self._config = config or get_config().neo4j
         self._driver = None
+        self._lock = threading.Lock()
 
     def connect(self) -> None:
         if self._driver is not None:
             return
-        try:
-            driver_kwargs: Dict[str, Any] = {
-                "auth": (self._config.username, self._config.password),
-                "max_connection_pool_size": self._config.max_connection_pool_size,
-                "connection_timeout": self._config.connection_timeout,
-            }
-            # Only force SSL for cloud URIs (neo4j:// or neo4j+s://)
-            if "+s" in self._config.uri or self._config.uri.startswith("neo4j://"):
-                driver_kwargs["ssl_context"] = ssl.create_default_context(cafile=certifi.where())
-            self._driver = GraphDatabase.driver(self._config.uri, **driver_kwargs)
-            self._driver.verify_connectivity()
-            logger.info(f"Connected to Neo4j at {self._config.uri}")
-        except ServiceUnavailable as e:
-            logger.error(f"Cannot connect to Neo4j: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Neo4j connection error: {e}")
-            raise
+        with self._lock:
+            if self._driver is not None:
+                return
+            try:
+                driver_kwargs: Dict[str, Any] = {
+                    "auth": (self._config.username, self._config.password),
+                    "max_connection_pool_size": self._config.max_connection_pool_size,
+                    "connection_timeout": self._config.connection_timeout,
+                }
+                if "+s" in self._config.uri or self._config.uri.startswith("neo4j://"):
+                    driver_kwargs["ssl_context"] = ssl.create_default_context(cafile=certifi.where())
+                self._driver = GraphDatabase.driver(self._config.uri, **driver_kwargs)
+                self._driver.verify_connectivity()
+                logger.info(f"Connected to Neo4j at {self._config.uri}")
+            except ServiceUnavailable as e:
+                logger.error(f"Cannot connect to Neo4j: {e}")
+                raise
+            except Exception as e:
+                logger.error(f"Neo4j connection error: {e}")
+                raise
 
     def close(self) -> None:
         if self._driver:

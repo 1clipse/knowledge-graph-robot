@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from api.deps import neo4j_client
+from api.deps import get_db
 from config.settings import get_config
-from graph.query import GraphQuery
+from graph.client import Neo4jClient
 
 router = APIRouter()
 
@@ -59,15 +59,18 @@ _EVAL_QA_PAIRS: List[Dict[str, str]] = [
 ]
 
 
-def _build_context(question: str, top_k: int, max_hops: int) -> str:
+def _build_context(db: Neo4jClient, question: str, top_k: int, max_hops: int) -> str:
     from api.routes.ask import _build_context as ask_build_context
-    ctx, _, _ = ask_build_context(question, top_k, max_hops)
+    ctx, _, _ = ask_build_context(db, question, top_k, max_hops)
     return ctx
 
 
 @router.post("/eval/run", response_model=EvalResponse)
-async def run_evaluation(request: EvalRequest) -> EvalResponse:
-    if neo4j_client is None:
+async def run_evaluation(
+    request: EvalRequest,
+    db: Neo4jClient = Depends(get_db),
+) -> EvalResponse:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
 
     config = get_config()
@@ -83,7 +86,7 @@ async def run_evaluation(request: EvalRequest) -> EvalResponse:
 
     for item in request.items:
         # Step 1: Generate answer via the same QA flow
-        context = _build_context(item.question, request.top_k, request.max_hops)
+        context = _build_context(db, item.question, request.top_k, request.max_hops)
 
         if not context:
             results.append(EvalItemResult(

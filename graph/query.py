@@ -187,7 +187,8 @@ class GraphQuery:
         edges: List[Dict[str, Any]] = []
 
         node_records = self._client.execute_query(
-            "MATCH (n) WHERE n.name IS NOT NULL RETURN n LIMIT $limit",
+            "MATCH (n) WHERE n.name IS NOT NULL AND NOT n:IngestLog "
+            "RETURN n LIMIT $limit",
             {"limit": limit},
         )
         for record in node_records:
@@ -195,11 +196,13 @@ class GraphQuery:
             if hasattr(node, "labels"):
                 self._add_graph_node(nodes, node)
 
+        # Use 3x limit for edges — graphs typically have more edges than nodes
         rel_records = self._client.execute_query(
             "MATCH (a)-[r]->(b) "
             "WHERE a.name IS NOT NULL AND b.name IS NOT NULL "
+            "AND NOT a:IngestLog AND NOT b:IngestLog "
             "RETURN a, r, b LIMIT $limit",
-            {"limit": limit},
+            {"limit": limit * 3},
         )
         for record in rel_records:
             a = record.get("a")
@@ -238,11 +241,8 @@ class GraphQuery:
                         "score": r.get("score", 0),
                         "source": "vector",
                     })
-            else:
-                # Fallback: in-memory cosine similarity scan
-                self._vector_search_fallback(query_emb, top_k, all_results)
         except Exception as e:
-            logger.debug(f"Vector search skipped: {e}")
+            logger.warning(f"Vector search failed (index may not exist): {e}")
 
         # Keyword search
         kw_results = self.fulltext_search(query_text, limit=top_k)
@@ -259,33 +259,6 @@ class GraphQuery:
                 seen_names.add(name)
                 merged.append(item)
         return merged[:top_k]
-
-    def _vector_search_fallback(
-        self, query_emb: list, top_k: int, results: list
-    ) -> None:
-        """In-memory cosine similarity scan — fallback when native vector index is unavailable."""
-        from graph.embeddings import cosine_similarity
-
-        raw = self._client.execute_query(
-            "MATCH (n) WHERE n._embedding IS NOT NULL AND n.name IS NOT NULL "
-            "RETURN labels(n) AS labels, n.name AS name, n._embedding AS embedding "
-            "LIMIT 500"
-        )
-        scored = []
-        for r in raw:
-            emb = r.get("embedding")
-            name = r.get("name", "")
-            if emb and name and not all(v == 0.0 for v in emb):
-                sim = cosine_similarity(query_emb, emb)
-                scored.append((r["labels"], name, sim))
-        scored.sort(key=lambda x: -x[2])
-        for labels, name, score in scored[:top_k]:
-            results.append({
-                "labels": self._display_labels(labels),
-                "node": {"name": name},
-                "score": score,
-                "source": "vector_fallback",
-            })
 
     def fulltext_search(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
         query = (

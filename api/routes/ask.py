@@ -1,29 +1,32 @@
 from __future__ import annotations
 
+import io
 import json
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from api.deps import neo4j_client
+from api.deps import get_db
 from config.settings import get_config
+from graph.client import Neo4jClient
 from graph.query import GraphQuery
 from graph.rag_retriever import GraphRagRetriever
 from rag.citation import CitationVerifier
 
 router = APIRouter()
 
-_retriever: Optional[GraphRagRetriever] = None
+_retriever_cache: Dict[int, GraphRagRetriever] = {}
 
 
-def _get_retriever() -> GraphRagRetriever:
-    global _retriever
-    if _retriever is None and neo4j_client is not None:
-        _retriever = GraphRagRetriever(neo4j_client)
-    return _retriever
+def _get_retriever(db: Neo4jClient) -> GraphRagRetriever:
+    """Get or create a GraphRagRetriever for the given db client."""
+    db_id = id(db)
+    if db_id not in _retriever_cache:
+        _retriever_cache[db_id] = GraphRagRetriever(db)
+    return _retriever_cache[db_id]
 
 
 class AskRequest(BaseModel):
@@ -46,6 +49,7 @@ class AskResponse(BaseModel):
     reasoning_paths: List[Dict[str, Any]] = Field(default_factory=list)
     citations: List[Citation] = Field(default_factory=list)
     context_used: str = ""
+    degraded: bool = False
 
 
 QA_SYSTEM_PROMPT = """你是一个工业机器人领域的知识问答助手。基于提供的知识图谱上下文信息，回答用户的问题。
@@ -92,13 +96,13 @@ def _parse_citations(answer: str, reasoning_paths: List[Dict[str, Any]]) -> List
     return citations
 
 
-def _build_context(question: str, top_k: int, max_hops: int) -> tuple:
+def _build_context(db: Neo4jClient, question: str, top_k: int, max_hops: int) -> tuple:
     """Delegates retrieval to GraphRagRetriever."""
-    retriever = _get_retriever()
+    retriever = _get_retriever(db)
     retrieval = retriever.retrieve(question, top_k=top_k, max_hops=max_hops)
 
     # Optionally attach community context
-    retrieval = _try_attach_communities(retrieval)
+    retrieval = _try_attach_communities(db, retrieval)
 
     # Convert scored paths back to the legacy path dict format
     paths = [sp.to_dict() for sp in retrieval.scored_paths]
@@ -106,23 +110,68 @@ def _build_context(question: str, top_k: int, max_hops: int) -> tuple:
     return retrieval.context_used, retrieval.search_results, paths
 
 
-def _try_attach_communities(retrieval) -> Any:
+def _try_attach_communities(db: Neo4jClient, retrieval) -> Any:
     """Attach community summaries if space permits."""
     try:
-        retriever = _get_retriever()
+        retriever = _get_retriever(db)
         retriever.attach_community_context(retrieval)
     except Exception as e:
         logger.debug(f"Community context skipped: {e}")
     return retrieval
 
 
+def _build_fallback_answer(question: str, context_used: str, reasoning_paths: List[Dict[str, Any]]) -> str:
+    """Build a useful answer when the LLM is unavailable but GraphRAG retrieved paths."""
+    if not reasoning_paths:
+        return (
+            "LLM 服务暂时不可用，但知识图谱检索已完成；"
+            "当前没有可展示的推理路径。"
+        )
+
+    lines = [
+        "LLM 服务暂时不可用，以下是基于知识图谱检索到的结构化推理路径：",
+        f"问题：{question}",
+        "",
+    ]
+    for i, path in enumerate(reasoning_paths[:5], start=1):
+        node_names = [
+            node.get("name", "")
+            for node in path.get("nodes", [])
+            if node.get("name")
+        ]
+        edge_types = [
+            edge.get("type", "")
+            for edge in path.get("edges", [])
+            if edge.get("type")
+        ]
+        if node_names and edge_types:
+            chain_parts: list[str] = []
+            for idx, name in enumerate(node_names):
+                chain_parts.append(name)
+                if idx < len(edge_types):
+                    chain_parts.append(f"--{edge_types[idx]}-->")
+            lines.append(f"[P{i}] " + " ".join(chain_parts))
+        elif node_names:
+            lines.append(f"[P{i}] " + " → ".join(node_names))
+
+    if len(reasoning_paths) > 5:
+        lines.append(f"\n另有 {len(reasoning_paths) - 5} 条路径已省略，可查看 reasoning_paths 字段。")
+    if context_used and not any(line.startswith("[P") for line in lines):
+        lines.append("\n原始检索上下文：")
+        lines.append(context_used[:2000])
+    return "\n".join(lines)
+
+
 @router.post("/ask", response_model=AskResponse)
-async def ask_question(request: AskRequest) -> AskResponse:
-    if neo4j_client is None:
+async def ask_question(
+    request: AskRequest,
+    db: Neo4jClient = Depends(get_db),
+) -> AskResponse:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
 
     context_used, relevant_entities, reasoning_paths = _build_context(
-        request.question, request.top_k, request.max_hops
+        db, request.question, request.top_k, request.max_hops
     )
 
     if not context_used:
@@ -131,6 +180,8 @@ async def ask_question(request: AskRequest) -> AskResponse:
             question=request.question,
             answer="知识图谱中未找到相关信息。请尝试用更具体的术语提问，或先录入相关数据。",
         )
+
+    simplified_paths = [_simplify_path(p) for p in reasoning_paths]
 
     try:
         from openai import AsyncOpenAI
@@ -153,21 +204,23 @@ async def ask_question(request: AskRequest) -> AskResponse:
             max_tokens=1024,
         )
         answer = content or ""
+        degraded = False
     except Exception as e:
         logger.error(f"LLM QA failed: {e}")
-        answer = f"无法生成回答（LLM服务不可用）。相关知识路径：\n{context_used}"
+        answer = _build_fallback_answer(request.question, context_used, simplified_paths)
+        degraded = True
 
-    simplified_paths = [_simplify_path(p) for p in reasoning_paths]
     citations = _parse_citations(answer, simplified_paths)
 
     return AskResponse(
-        status="success",
+        status="degraded" if degraded else "success",
         question=request.question,
         answer=answer,
         relevant_entities=relevant_entities,
         reasoning_paths=simplified_paths,
         citations=citations,
         context_used=context_used,
+        degraded=degraded,
     )
 
 
@@ -192,13 +245,16 @@ def _simplify_path(path: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.post("/ask/stream")
-async def ask_question_stream(request: AskRequest):
-    if neo4j_client is None:
+async def ask_question_stream(
+    request: AskRequest,
+    db: Neo4jClient = Depends(get_db),
+):
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
 
     config = get_config()
     context_used, relevant_entities, reasoning_paths = _build_context(
-        request.question, request.top_k, request.max_hops
+        db, request.question, request.top_k, request.max_hops
     )
 
     if not context_used:
@@ -233,7 +289,11 @@ async def ask_question_stream(request: AskRequest):
 
         except Exception as e:
             logger.error(f"LLM stream failed: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            simplified_paths = [_simplify_path(p) for p in reasoning_paths]
+            fallback = _build_fallback_answer(request.question, context_used, simplified_paths)
+            yield f"data: {json.dumps({'type': 'degraded', 'message': 'LLM 服务暂时不可用，已返回知识图谱降级答案'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'token', 'content': fallback}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'degraded': True}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -282,13 +342,13 @@ COMPARE_PROMPT = """你是一个工业机器人领域的专家。请基于提供
 
 
 @router.get("/communities")
-async def get_communities():
+async def get_communities(db: Neo4jClient = Depends(get_db)):
     """Return graph communities detected by Louvain algorithm."""
-    if neo4j_client is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
 
     from graph.communities import CommunityManager
-    cm = CommunityManager(neo4j_client)
+    cm = CommunityManager(db)
     communities = cm.detect()
 
     try:
@@ -311,11 +371,14 @@ async def get_communities():
 
 
 @router.post("/compare", response_model=CompareResponse)
-async def compare_entities(request: CompareRequest) -> CompareResponse:
-    if neo4j_client is None:
+async def compare_entities(
+    request: CompareRequest,
+    db: Neo4jClient = Depends(get_db),
+) -> CompareResponse:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
 
-    graph_query = GraphQuery(neo4j_client)
+    graph_query = GraphQuery(db)
 
     # Fetch entity A
     entity_a = _fetch_entity(graph_query, request.entity_a, request.type_a)
@@ -366,24 +429,12 @@ async def compare_entities(request: CompareRequest) -> CompareResponse:
 
 # ── Export helpers ──────────────────────────────────────
 
-import io
-import re as _re_md
-from datetime import datetime as _dt
-from urllib.parse import quote as _url_quote
-
-_FONT_PATH = r"C:\Windows\Fonts\msyh.ttc"
-
-
-def _make_filename(entity_a: Dict[str, Any], entity_b: Dict[str, Any], ext: str) -> str:
-    now = _dt.now().strftime("%Y%m%d_%H%M%S")
-    na = (entity_a.get("name") or "entity_a").replace(" ", "_")
-    nb = (entity_b.get("name") or "entity_b").replace(" ", "_")
-    return f"Compare_{na}_vs_{nb}_{now}.{ext}"
-
-
-def _content_disposition(filename: str) -> str:
-    safe = _re_md.sub(r'[^A-Za-z0-9_.-]+', '_', filename).strip('_') or 'comparison_report'
-    return f"attachment; filename=\"{safe}\"; filename*=UTF-8''{_url_quote(filename)}"
+from export.generator import (
+    generate_comparison_pdf as _generate_comparison_pdf,
+    generate_comparison_docx as _generate_comparison_docx,
+    make_filename as _make_filename,
+    content_disposition as _content_disposition,
+)
 
 
 # ── PDF Export ──────────────────────────────────────────
@@ -410,132 +461,6 @@ async def compare_export_pdf(request: CompareExportRequest):
         media_type="application/pdf",
         headers={"Content-Disposition": _content_disposition(filename)},
     )
-
-
-def _generate_comparison_pdf(
-    entity_a: Dict[str, Any],
-    entity_b: Dict[str, Any],
-    common_relations: List[Dict[str, Any]],
-    comparison: str,
-) -> bytes:
-    from fpdf import FPDF
-
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=18)
-    pdf.add_page()
-
-    pdf.add_font("YaHei", fname=_FONT_PATH)
-    pdf.add_font("YaHei", style="B", fname=_FONT_PATH)
-
-    name_a = str(entity_a.get("name", "实体A"))
-    name_b = str(entity_b.get("name", "实体B"))
-    props_a = entity_a.get("properties", {}) or {}
-    props_b = entity_b.get("properties", {}) or {}
-
-    def _w(text, bold=False, size=10.5, align="L", h=6):
-        pdf.set_font("YaHei", "B" if bold else "", size)
-        pdf.multi_cell(0, h, text, align=align)
-        pdf.set_x(pdf.l_margin)
-        pdf.ln(1)
-
-    def _section_heading(text, level=1):
-        pdf.ln(4)
-        size = 15 if level == 0 else (13 if level == 1 else 11)
-        _w(text, bold=True, size=size)
-        pdf.ln(2)
-
-    # Title
-    _w("实体对比分析报告", bold=True, size=18, align="C")
-    _w(f"{name_a}  vs  {name_b}", size=10, align="C")
-    _w(_dt.now().strftime("%Y-%m-%d %H:%M"), size=9, align="C")
-    pdf.ln(6)
-
-    # Section 1: Properties table
-    _section_heading("一、基本信息对比")
-    all_keys = list(dict.fromkeys(list(props_a.keys()) + list(props_b.keys())))
-    if not all_keys:
-        all_keys = ["name"]
-
-    col_w = [50, 65, 65]
-    pdf.set_font("YaHei", "B", 9)
-    pdf.set_fill_color(219, 234, 254)
-    for i, hdr in enumerate(["属性", name_a, name_b]):
-        pdf.cell(col_w[i], 7, hdr, border=1, fill=True, align="C")
-    pdf.ln()
-
-    pdf.set_font("YaHei", "", 9)
-    for key in all_keys:
-        va = str(props_a.get(key, "—")) if props_a.get(key) is not None else "—"
-        vb = str(props_b.get(key, "—")) if props_b.get(key) is not None else "—"
-        for i, val in enumerate([key, va, vb]):
-            pdf.cell(col_w[i], 7, val[:40], border=1, align="C" if i == 0 else "L")
-        pdf.ln()
-    pdf.ln(4)
-
-    # Section 2: Common relations
-    if common_relations:
-        _section_heading("二、共同关系")
-        rel_col = [46, 67, 67]
-        pdf.set_font("YaHei", "B", 9)
-        pdf.set_fill_color(219, 234, 254)
-        for i, hdr in enumerate(["关系类型", f"{name_a} 关联", f"{name_b} 关联"]):
-            pdf.cell(rel_col[i], 7, hdr, border=1, fill=True, align="C")
-        pdf.ln()
-        pdf.set_font("YaHei", "", 9)
-        for cr in common_relations:
-            vals = [
-                cr.get("relation_type", ""),
-                ", ".join(cr.get("entity_a_targets", [])[:3]),
-                ", ".join(cr.get("entity_b_targets", [])[:3]),
-            ]
-            for i, val in enumerate(vals):
-                pdf.cell(rel_col[i], 7, val[:32], border=1, align="L")
-            pdf.ln()
-        pdf.ln(4)
-
-    # Section 3: AI comparison
-    sec_num = "三" if common_relations else "二"
-    _section_heading(f"{sec_num}、AI 对比分析")
-    if comparison:
-        pdf.set_font("YaHei", "", 10)
-        for line in comparison.split("\n"):
-            stripped = line.strip()
-            if not stripped:
-                pdf.ln(3)
-                continue
-            if stripped.startswith("### "):
-                pdf.set_font("YaHei", "B", 10.5)
-                pdf.multi_cell(0, 6, stripped[4:])
-                pdf.set_x(pdf.l_margin)
-                pdf.set_font("YaHei", "", 10)
-            elif stripped.startswith("## "):
-                pdf.set_font("YaHei", "B", 12)
-                pdf.multi_cell(0, 7, stripped[3:])
-                pdf.set_x(pdf.l_margin)
-                pdf.set_font("YaHei", "", 10)
-            elif stripped.startswith("# "):
-                pdf.set_font("YaHei", "B", 13)
-                pdf.multi_cell(0, 7, stripped[2:])
-                pdf.set_x(pdf.l_margin)
-                pdf.set_font("YaHei", "", 10)
-            elif stripped.startswith("- "):
-                pdf.multi_cell(0, 6, "  • " + stripped[2:])
-                pdf.set_x(pdf.l_margin)
-            else:
-                parts = _re_md.split(r"(\*\*.+?\*\*)", stripped)
-                line_text = "".join(
-                    part[2:-2] if part.startswith("**") and part.endswith("**") else part
-                    for part in parts
-                )
-                pdf.multi_cell(0, 6, line_text)
-                pdf.set_x(pdf.l_margin)
-    else:
-        _w("（无分析内容）", size=10)
-
-    pdf.ln(8)
-    _w("— 工业机器人知识图谱系统自动生成 —", size=8, align="C")
-
-    return bytes(pdf.output())
 
 
 # ── DOCX Export ─────────────────────────────────────────
@@ -567,186 +492,6 @@ async def compare_export_docx(request: CompareExportRequest):
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": _content_disposition(filename)},
     )
-
-
-def _generate_comparison_docx(
-    entity_a: Dict[str, Any],
-    entity_b: Dict[str, Any],
-    common_relations: List[Dict[str, Any]],
-    comparison: str,
-):
-    """Build a structured .docx comparison report using python-docx."""
-    from docx import Document
-    from docx.shared import Pt, RGBColor, Cm
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml.ns import qn
-
-    doc = Document()
-
-    for section in doc.sections:
-        section.top_margin = Cm(2)
-        section.bottom_margin = Cm(2)
-
-    style = doc.styles["Normal"]
-    style.font.size = Pt(10.5)
-    style.paragraph_format.space_after = Pt(4)
-
-    name_a = str(entity_a.get("name", "实体A"))
-    name_b = str(entity_b.get("name", "实体B"))
-    props_a = entity_a.get("properties", {}) or {}
-    props_b = entity_b.get("properties", {}) or {}
-
-    # Title
-    title = doc.add_heading("实体对比分析报告", level=0)
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _set_keep_with_next(title)
-    date_p = doc.add_paragraph()
-    date_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    date_p.add_run(_dt.now().strftime("%Y-%m-%d %H:%M")).font.size = Pt(9)
-    _set_keep_with_next(date_p)
-    doc.add_paragraph()
-
-    # Section 1: Properties table
-    h1 = doc.add_heading("一、基本信息对比", level=1)
-    _set_keep_with_next(h1)
-    all_keys = list(dict.fromkeys(list(props_a.keys()) + list(props_b.keys())))
-    if not all_keys:
-        all_keys = ["name"]
-
-    table = doc.add_table(rows=len(all_keys) + 1, cols=3)
-    table.style = "Light Grid Accent 1"
-    _set_table_rows_keep_together(table)
-    hdr = table.rows[0].cells
-    hdr[0].text = "属性"
-    hdr[1].text = name_a
-    hdr[2].text = name_b
-    for cell in hdr:
-        for p in cell.paragraphs:
-            for run in p.runs:
-                run.bold = True
-                run.font.size = Pt(9)
-    for i, key in enumerate(all_keys):
-        row = table.rows[i + 1]
-        row.cells[0].text = key
-        row.cells[1].text = str(props_a.get(key, "—")) if props_a.get(key) is not None else "—"
-        row.cells[2].text = str(props_b.get(key, "—")) if props_b.get(key) is not None else "—"
-        for cell in row.cells:
-            for p in cell.paragraphs:
-                for run in p.runs:
-                    run.font.size = Pt(9)
-    doc.add_paragraph()
-
-    # Section 2: Common relations
-    if common_relations:
-        h2 = doc.add_heading("二、共同关系", level=1)
-        _set_keep_with_next(h2)
-        rel_table = doc.add_table(rows=len(common_relations) + 1, cols=3)
-        rel_table.style = "Light Grid Accent 1"
-        _set_table_rows_keep_together(rel_table)
-        rel_hdr = rel_table.rows[0].cells
-        rel_hdr[0].text = "关系类型"
-        rel_hdr[1].text = f"{name_a} 关联"
-        rel_hdr[2].text = f"{name_b} 关联"
-        for cell in rel_hdr:
-            for p in cell.paragraphs:
-                for run in p.runs:
-                    run.bold = True
-                    run.font.size = Pt(9)
-        for i, cr in enumerate(common_relations):
-            row = rel_table.rows[i + 1]
-            row.cells[0].text = cr.get("relation_type", "")
-            row.cells[1].text = ", ".join(cr.get("entity_a_targets", [])[:5])
-            row.cells[2].text = ", ".join(cr.get("entity_b_targets", [])[:5])
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    for run in p.runs:
-                        run.font.size = Pt(9)
-        doc.add_paragraph()
-
-    # Section 3: AI comparison narrative
-    if comparison:
-        section_num = "三" if common_relations else "二"
-        h3 = doc.add_heading(f"{section_num}、AI 对比分析", level=1)
-        _set_keep_with_next(h3)
-        for para_text in comparison.split("\n"):
-            para_text = para_text.strip()
-            if not para_text:
-                continue
-            if para_text.startswith("### "):
-                sh = doc.add_heading(para_text[4:], level=3)
-                _set_keep_with_next(sh)
-            elif para_text.startswith("## "):
-                sh = doc.add_heading(para_text[3:], level=2)
-                _set_keep_with_next(sh)
-            elif para_text.startswith("# "):
-                sh = doc.add_heading(para_text[2:], level=1)
-                _set_keep_with_next(sh)
-            elif para_text.startswith("- "):
-                p = doc.add_paragraph(para_text[2:], style="List Bullet")
-                p.paragraph_format.keep_together = True
-            else:
-                p = doc.add_paragraph()
-                p.paragraph_format.keep_together = True
-                _apply_markdown_bold(p, para_text)
-
-    # Footer
-    doc.add_paragraph()
-    footer_p = doc.add_paragraph()
-    footer_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    footer_run = footer_p.add_run("— 工业机器人知识图谱系统自动生成 —")
-    footer_run.font.size = Pt(8)
-    footer_run.font.color.rgb = RGBColor(0x94, 0xA3, 0xB8)
-
-    return doc
-
-
-def _set_keep_with_next(paragraph):
-    """Prevent a paragraph from being the last on its page."""
-    from lxml import etree
-    from docx.oxml.ns import qn as _qn
-    pPr = paragraph._p.get_or_add_pPr()
-    kn = pPr.find(_qn("w:keepNext"))
-    if kn is None:
-        kn = etree.SubElement(pPr, _qn("w:keepNext"))
-    kn.set(_qn("w:val"), "true")
-
-
-def _set_table_rows_keep_together(table):
-    """Prevent table rows from splitting across pages."""
-    from lxml import etree
-    from docx.oxml.ns import qn as _qn
-    for row in table.rows:
-        for cell in row.cells:
-            for p in cell.paragraphs:
-                pPr = p._p.get_or_add_pPr()
-                kl = pPr.find(_qn("w:keepLines"))
-                if kl is None:
-                    kl = etree.SubElement(pPr, _qn("w:keepLines"))
-                kl.set(_qn("w:val"), "true")
-
-
-def _apply_markdown_bold(paragraph, text: str):
-    """Convert **text** spans to bold runs within a paragraph."""
-    for run in paragraph.runs:
-        run.text = ""
-    parts = _re_md.split(r"(\*\*.+?\*\*)", text)
-    first = True
-    for part in parts:
-        if not part:
-            continue
-        if part.startswith("**") and part.endswith("**"):
-            if first and paragraph.runs and paragraph.runs[0].text == "":
-                paragraph.runs[0].text = part[2:-2]
-                paragraph.runs[0].bold = True
-            else:
-                run = paragraph.add_run(part[2:-2])
-                run.bold = True
-        else:
-            if first and paragraph.runs and paragraph.runs[0].text == "":
-                paragraph.runs[0].text = part
-            else:
-                paragraph.add_run(part)
-        first = False
 
 
 def _fetch_entity(graph_query: GraphQuery, name: str, label: str = "") -> Dict[str, Any]:

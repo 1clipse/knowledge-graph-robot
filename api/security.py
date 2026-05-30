@@ -14,7 +14,6 @@ are rejected with 403.
 
 from __future__ import annotations
 
-import os
 import re
 import time
 from functools import wraps
@@ -24,11 +23,8 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from loguru import logger
 
-# ── Env configuration ──
+from config.settings import get_config
 
-_KG_AUTH_MODE = os.environ.get("KG_AUTH_MODE", "none").lower()
-_KG_API_KEY = os.environ.get("KG_API_KEY", "")
-_KG_ADMIN_KEY = os.environ.get("KG_ADMIN_KEY", "")
 
 # Paths exempt from auth even in "full" mode
 SKIP_AUTH_PATHS: Set[str] = {
@@ -95,45 +91,49 @@ async def auth_middleware(request: Request, call_next: Callable):
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")
+    auth_config = get_config().auth
+    auth_mode = (auth_config.mode or "none").lower()
+    api_key = auth_config.api_key
+    admin_key = auth_config.admin_key
 
-    if _KG_AUTH_MODE == "none":
+    if auth_mode == "none":
         return await call_next(request)
 
-    elif _KG_AUTH_MODE == "admin_only":
+    elif auth_mode == "admin_only":
         if _is_admin_path(method, path):
-            blocked = _check_admin_auth(auth_header, request)
+            blocked = _check_admin_auth(auth_header, request, admin_key)
             if blocked is not None:
                 return blocked
         return await call_next(request)
 
-    elif _KG_AUTH_MODE == "full":
+    elif auth_mode == "full":
         # All API paths need at least API key
-        if not _KG_API_KEY:
-            blocked = _check_admin_auth(auth_header, request)
+        if not api_key:
+            blocked = _check_admin_auth(auth_header, request, admin_key)
             if blocked is not None:
                 return blocked
             return await call_next(request)
         scheme, _, token = auth_header.partition(" ")
-        if scheme.lower() != "bearer" or token not in (_KG_API_KEY, _KG_ADMIN_KEY):
+        if scheme.lower() != "bearer" or token not in (api_key, admin_key):
             return _json_403("Invalid API key")
         # Admin paths additionally require admin key
         if _is_admin_path(method, path):
-            if token != _KG_ADMIN_KEY or not _KG_ADMIN_KEY:
+            if token != admin_key or not admin_key:
                 return _json_403("Admin key required for this endpoint")
         return await call_next(request)
 
     else:
-        logger.warning(f"Unknown KG_AUTH_MODE: {_KG_AUTH_MODE}")
+        logger.warning(f"Unknown KG_AUTH_MODE: {auth_mode}")
         return await call_next(request)
 
 
-def _check_admin_auth(auth_header: str, request: Request):
+def _check_admin_auth(auth_header: str, request: Request, admin_key: str):
     """Validate admin key, or reject if not configured."""
-    if not _KG_ADMIN_KEY:
+    if not admin_key:
         logger.warning(f"Admin endpoint {request.method} {request.url.path} blocked: KG_ADMIN_KEY not set")
         return _json_403("Admin key not configured on server")
     scheme, _, token = auth_header.partition(" ")
-    if scheme.lower() != "bearer" or token != _KG_ADMIN_KEY:
+    if scheme.lower() != "bearer" or token != admin_key:
         return _json_403("Invalid or missing admin key")
     return None  # OK, caller must check for None
 
@@ -156,14 +156,12 @@ def validate_read_only_cypher(cypher: str) -> Optional[str]:
 
 # ── Audit logging ──
 
-_AUDIT_LOG_PATH = os.environ.get("KG_AUDIT_LOG", "logs/audit.log")
-
 
 def _ensure_audit_logger():
     """Lazily configure audit logger."""
     if not hasattr(_ensure_audit_logger, "_ready"):
         logger.add(
-            _AUDIT_LOG_PATH,
+            get_config().app.audit_log_path,
             format="{time:YYYY-MM-DD HH:mm:ss} | AUDIT | {message}",
             rotation="50 MB",
             retention="90 days",

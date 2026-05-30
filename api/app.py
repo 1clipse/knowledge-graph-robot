@@ -17,13 +17,9 @@ from api.security import auth_middleware, audit_middleware
 from config.settings import get_config
 from graph.client import Neo4jClient
 from graph.schema_manager import SchemaManager
-from api import deps
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _UI_DIR = _PROJECT_ROOT / "ui"
-
-_API_KEY = _os.environ.get("KG_API_KEY", "")
-_CORS_ORIGINS = _os.environ.get("KG_CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
 
 
 @asynccontextmanager
@@ -38,32 +34,44 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     logger.info("Starting Industrial Robot Knowledge Graph API...")
 
-    auth_mode = _os.environ.get("KG_AUTH_MODE", "none")
-    if not _API_KEY and auth_mode != "none":
+    auth_mode = config.auth.mode if config.auth.api_key else "none"
+    if not config.auth.api_key and auth_mode != "none":
         logger.warning("KG_AUTH_MODE={} but KG_API_KEY not set — auth will fail", auth_mode)
-    admin_key = _os.environ.get("KG_ADMIN_KEY", "")
-    if not admin_key and auth_mode == "admin_only":
+    if not config.auth.admin_key and auth_mode == "admin_only":
         logger.warning("KG_AUTH_MODE=admin_only but KG_ADMIN_KEY not set — admin endpoints blocked")
 
-    # BGE-M3 model path (read from .env, fall back to default)
-    _os.environ.setdefault("EMBEDDING_MODEL_PATH", "E:/huggingface_cache/BAAI/bge-m3")
-    _os.environ.setdefault("HF_HOME", "E:/huggingface_cache")
-    _os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    # BGE-M3 model path from config
+    if config.embedding.model_path:
+        _os.environ["EMBEDDING_MODEL_PATH"] = config.embedding.model_path
+        if not Path(config.embedding.model_path).exists():
+            logger.warning(f"Embedding model path does not exist: {config.embedding.model_path}")
+    if config.embedding.hf_home:
+        _os.environ["HF_HOME"] = config.embedding.hf_home
+    if config.embedding.hf_hub_offline:
+        _os.environ["HF_HUB_OFFLINE"] = "1"
 
-    # Preload embedding model in background to avoid blocking first request
-    from graph.embeddings import init_model
-    init_model()
+    # Preload embedding model and expose readiness in /health. Startup waits briefly
+    # so a bad model path is visible early without blocking the API for minutes.
+    from graph.embeddings import init_model, status as embedding_status
+    embedding_ready = init_model(wait=True, timeout=10)
+    if embedding_ready:
+        logger.info("Embedding model is ready")
+    else:
+        logger.warning(f"Embedding model is not ready at startup: {embedding_status()}")
 
+    neo4j_client = Neo4jClient()
+    schema_mgr: SchemaManager = None
+    app.state.neo4j_client = None
+    app.state.schema_manager = None
     try:
-        deps.neo4j_client.connect()
-        deps.schema_manager = SchemaManager(deps.neo4j_client)
-        deps.schema_manager.initialize_schema()
-        # Store in app.state for dependency injection
-        app.state.neo4j_client = deps.neo4j_client
-        app.state.schema_manager = deps.schema_manager
+        neo4j_client.connect()
+        schema_mgr = SchemaManager(neo4j_client)
+        schema_mgr.initialize_schema()
+        app.state.neo4j_client = neo4j_client
+        app.state.schema_manager = schema_mgr
         # Clean up IngestLog nodes with missing names (from old code)
         try:
-            result = deps.neo4j_client.execute_query(
+            result = neo4j_client.execute_query(
                 "MATCH (n:IngestLog) WHERE n.name IS NULL OR n.name = '' "
                 "WITH n, count(n) AS cnt DETACH DELETE n RETURN cnt"
             )
@@ -80,19 +88,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     logger.info("Shutting down...")
-    deps.neo4j_client.close()
+    neo4j_client.close()
 
 
 app = FastAPI(
     title="工业机器人知识图谱 API",
     description="Industrial Robot Knowledge Graph System API",
-    version="1.0.0",
+    version="2.3.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_CORS_ORIGINS,
+    allow_origins=get_config().app.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -142,6 +150,16 @@ app.include_router(eval.router, prefix="/api/v1", tags=["质量评估"])
 
 
 @app.get("/health")
-def health_check() -> dict:
-    db_ok = deps.neo4j_client.health_check()
-    return {"status": "ok" if db_ok else "degraded", "database": db_ok}
+def health_check(request: Request) -> dict:
+    db = getattr(request.app.state, "neo4j_client", None)
+    db_ok = db.health_check() if db else False
+    try:
+        from graph.embeddings import status as embedding_status
+        emb = embedding_status()
+    except Exception as e:
+        emb = {"ready": False, "error": str(e)}
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "database": db_ok,
+        "embedding": emb,
+    }

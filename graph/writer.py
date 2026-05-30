@@ -9,6 +9,7 @@ from extractors.llm_extractor import ExtractionResult
 from graph.client import Neo4jClient, _validate_identifier
 from graph.entity_resolver import EntityResolver
 from graph.schema_manager import SchemaManager
+from schema.loader import active_domain_key
 
 
 @dataclass
@@ -39,10 +40,12 @@ class GraphWriter:
         neo4j_client: Neo4jClient,
         schema_manager: Optional[SchemaManager] = None,
         entity_resolver: Optional[EntityResolver] = None,
+        domain: Optional[str] = None,
     ) -> None:
         self._client = neo4j_client
         self._schema_manager = schema_manager
-        self._entity_resolver = entity_resolver
+        self._entity_resolver = entity_resolver or EntityResolver()
+        self._domain = domain or active_domain_key()
 
     def write(self, result: ExtractionResult) -> WriteSummary:
         summary = WriteSummary(
@@ -179,6 +182,7 @@ class GraphWriter:
                 props["_source"] = entity.source
                 props["file"] = entity.source
             props["_confidence"] = entity.confidence
+            props["_domain"] = self._domain
             if entity.valid_from:
                 props["valid_from"] = entity.valid_from
             if entity.valid_to:
@@ -188,7 +192,7 @@ class GraphWriter:
 
             _validate_identifier(entity.type, "entity_type")
             prop_assignments = ", ".join(f"n.{k} = ${k}" for k in props.keys())
-            query = f"MERGE (n:`{entity.type}` {{name: $name}}) SET {prop_assignments}"
+            query = f"MERGE (n:`{entity.type}` {{name: $name, _domain: $_domain}}) SET {prop_assignments}"
             queries.append((query, props))
         return queries
 
@@ -199,6 +203,7 @@ class GraphWriter:
             if rel.source_ref:
                 rel_props["_source"] = rel.source_ref
             rel_props["_confidence"] = rel.confidence
+            rel_props["_domain"] = self._domain
             if rel.valid_from:
                 rel_props["valid_from"] = rel.valid_from
             if rel.valid_to:
@@ -210,14 +215,15 @@ class GraphWriter:
             params: Dict[str, Any] = {
                 "source_name": rel.source.name,
                 "target_name": rel.target.name,
+                "_domain": self._domain,
             }
             set_clause = ""
             if rel_props:
                 set_clause = " SET " + ", ".join(f"r.{k} = ${k}" for k in rel_props.keys())
                 params.update(rel_props)
             query = (
-                f"MATCH (s:`{rel.source.type}` {{name: $source_name}}) "
-                f"MATCH (t:`{rel.target.type}` {{name: $target_name}}) "
+                f"MATCH (s:`{rel.source.type}` {{name: $source_name, _domain: $_domain}}) "
+                f"MATCH (t:`{rel.target.type}` {{name: $target_name, _domain: $_domain}}) "
                 f"MERGE (s)-[r:`{rel.relation_type}`]->(t)"
                 f"{set_clause}"
             )

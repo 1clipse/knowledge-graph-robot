@@ -23,6 +23,16 @@ _ENV_OVERRIDE_MAP: dict[str, tuple[str, str]] = {
     "LLM_TEMPERATURE": ("llm", "temperature"),
     "LLM_MAX_TOKENS": ("llm", "max_tokens"),
     "LOG_LEVEL": ("logging", "level"),
+    "EMBEDDING_MODEL_PATH": ("embedding", "model_path"),
+    "HF_HOME": ("embedding", "hf_home"),
+    "HF_HUB_OFFLINE": ("embedding", "hf_hub_offline"),
+    "ODA_CONVERTER_PATH": ("paths", "oda_converter_path"),
+    "KG_FONT_PATH": ("paths", "font_path"),
+    "KG_AUTH_MODE": ("auth", "mode"),
+    "KG_API_KEY": ("auth", "api_key"),
+    "KG_ADMIN_KEY": ("auth", "admin_key"),
+    "KG_CORS_ORIGINS": ("app", "cors_origins"),
+    "KG_AUDIT_LOG": ("app", "audit_log_path"),
 }
 
 
@@ -60,11 +70,41 @@ class LoggingConfig(BaseModel):
     retention: str = "30 days"
 
 
+class EmbeddingConfig(BaseModel):
+    model_path: str = "models/bge-m3"
+    hf_home: str = ""
+    hf_hub_offline: bool = False
+
+
+class PathsConfig(BaseModel):
+    oda_converter_path: str = ""
+    font_path: str = ""
+
+
+class AuthConfig(BaseModel):
+    mode: str = "none"
+    api_key: str = ""
+    admin_key: str = ""
+
+
+class RuntimeConfig(BaseModel):
+    cors_origins: str = "http://localhost:3000,http://localhost:8000"
+    audit_log_path: str = "logs/audit.log"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+
 class AppConfig(BaseSettings):
     neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    paths: PathsConfig = Field(default_factory=PathsConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
+    app: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
     model_config = {
         "env_file": str(_PROJECT_ROOT / "config" / ".env"),
@@ -105,6 +145,10 @@ class AppConfig(BaseSettings):
             llm=LLMConfig(**data.get("llm", {})),
             extraction=ExtractionConfig(**data.get("extraction", {})),
             logging=LoggingConfig(**data.get("logging", {})),
+            embedding=EmbeddingConfig(**data.get("embedding", {})),
+            paths=PathsConfig(**data.get("paths", {})),
+            auth=AuthConfig(**data.get("auth", {})),
+            app=RuntimeConfig(**data.get("app", {})),
         )
 
 

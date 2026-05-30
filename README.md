@@ -80,6 +80,32 @@
                               └──────────────────────────────────┘
 ```
 
+## v2.3 更新亮点
+
+### 一键启动与本地可用性修复
+- 新增 `start_all.ps1` / `start_all.bat`，自动解析项目根目录、项目虚拟环境 Python 和 Neo4j 安装目录，依次启动 Neo4j、FastAPI 后端和前端静态页面。
+- 修复回滚领域 schema 后 `active_domain_key` 缺失导致 FastAPI 无法导入的问题，默认领域恢复为 `industrial_robot`。
+- 修复 embedding 启动链路：补充 `onnxruntime` 依赖，优先使用 BGE-M3 ONNX 后端；当 ONNX 不可用时不会默认加载超大 `sentence-transformers` 模型，避免后端启动崩溃。
+
+### 工业 CAD / DWG 摄入增强
+- DWG 文件经 ODA FileConverter 转换为 DXF 后进入结构化解析流程，保留图纸版本、图元数量、图层、直线/圆/圆弧等 CAD 元数据。
+- 摄入完成后清理临时 DXF 文件，避免批量导入产生垃圾文件。
+- CAD、CSV 等结构化输入进入高置信度 Tier 1 映射，再统一交给 `GraphWriter` 写入，保证来源、置信度、时间字段和领域标记一致。
+
+### GraphWriter 与领域隔离
+- 节点和关系写入统一带 `_domain=industrial_robot`，查询、质量检查、时间线和删除路径按领域过滤，减少跨数据集污染。
+- 默认启用 `EntityResolver`，写入前先对制造商等实体别名归一化，例如“发那科”统一为 `FANUC`。
+- 写入失败时 embedding 自动降级为无向量写入，不阻塞普通图谱构建。
+
+### 问答、评估与降级体验
+- RAG 问答在本地 LLM 不可用时返回明确的降级信息，不再让前端误以为系统无响应。
+- 对比分析在 LLM 服务不可用时展示原始属性和共同关系，仍可完成实体比对。
+- 新增评估上下文与退化启动测试，覆盖数据库/LLM/embedding 部分不可用时的启动行为。
+
+### UI 与安全优化
+- 前端图谱交互、批量导入、对比导出和状态展示继续优化，避免大字段 `_embedding` 进入 API 响应。
+- Cypher 只读校验、安全中间件、审计日志和 CORS 配置进一步完善。
+
 ## v2.2 更新亮点
 
 ### 4 级提取漏斗
@@ -126,13 +152,39 @@ Cypher 查询注入拦截，阻止所有写操作关键字。
 
 ## 快速启动
 
+### Windows 一键启动（推荐）
+
+```powershell
+E:
+cd "E:\Knowledge Graph_robot"
+.\start_all.ps1
+```
+
+或双击 / 运行：
+
+```bat
+start_all.bat
+```
+
+脚本会自动：
+1. 解析项目根目录和 `.venv\Scripts\python.exe`
+2. 启动或复用 Neo4j Bolt `7687`
+3. 启动 FastAPI + 前端静态页面 `8100`
+4. 执行 `/health` 健康检查并打开浏览器
+
+常用参数：
+
+```powershell
+.\start_all.ps1 -NoReload -OpenDocs -OpenNeo4j -NoBrowser -BackendPort 8100
+```
+
 ### 本地开发
 
 ```bash
 pip install -r requirements.txt
 
 # 前置条件: 运行本地 Neo4j (bolt://localhost:7687)
-# 前置条件: LLM 服务可达 (默认 http://10.117.29.24:5200/v1)
+# 前置条件: LLM 服务可达 (默认 http://localhost:5200/v1)
 # 前置条件: spaCy 中文模型 (zh_core_web_lg)
 # 配置 config/.env（参考下方配置说明）
 
@@ -184,15 +236,17 @@ NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=z12345678
 NEO4J_DATABASE=neo4j
 
-# LLM 服务 (P100 GPU)
-LLM_BASE_URL=http://10.117.29.24:5200/v1
+# LLM 服务（OpenAI 兼容 API；不启动时问答/对比会降级显示原始数据）
+LLM_BASE_URL=http://localhost:5200/v1
 LLM_API_KEY=local
 LLM_MODEL=qwen2.5-7b
 LLM_TEMPERATURE=0.1
 LLM_MAX_TOKENS=4096
 
-# BGE-M3 嵌入模型
+# BGE-M3 嵌入模型（推荐 ONNX Runtime）
 EMBEDDING_MODEL_PATH=E:/huggingface_cache/BAAI/bge-m3
+HF_HOME=E:/huggingface_cache
+HF_HUB_OFFLINE=true
 
 # spaCy 模型
 # pip install zh-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/zh_core_web_lg-3.7.0/zh_core_web_lg-3.7.0-py3-none-any.whl
@@ -214,7 +268,10 @@ spacy:
 ## 测试
 
 ```bash
-pytest tests/ -v    # 119 tests, 10 个测试文件
+pytest tests/ -v
+
+# 快速回归（启动、embedding、写入、安全、问答降级）
+pytest tests/test_app_degraded_startup.py tests/test_embeddings.py tests/test_graph_writer.py tests/test_security.py tests/test_ask_fallback.py -q
 ```
 
 ## 技术栈
